@@ -314,7 +314,7 @@ export default function ResourcesTable({
     const getSearchInput = () => {
         if (currentView === "internal") {
             return (
-                <div className="relative w-full sm:max-w-sm">
+                <div className="relative w-full w-full">
                     <Input
                         placeholder={t("resourcesSearch")}
                         value={internalGlobalFilter ?? ""}
@@ -330,7 +330,7 @@ export default function ResourcesTable({
             );
         }
         return (
-            <div className="relative w-full sm:max-w-sm">
+            <div className="relative w-full w-full">
                 <Input
                     placeholder={t("resourcesSearch")}
                     value={proxyGlobalFilter ?? ""}
@@ -964,15 +964,15 @@ export default function ResourcesTable({
                         onValueChange={handleTabChange}
                     >
                         <CardHeader
-                            className={`flex flex-col space-y-4 sm:flex-row sm:justify-between sm:space-y-0  pb-0`}
+                            className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 space-y-4 sm:flex-row sm:justify-between md:space-y-0  pb-0`}
                         >
                             <div
-                                className={`flex ${env.flags.enableClients ? "flex-col lg:flex-row" : "flex-row"} space-y-3 w-full sm:mr-2 gap-2`}
+                                className={`flex ${env.flags.enableClients ? "flex-col xl:flex-row xl:col-span-2" : "flex-row"} space-y-3 w-full sm:mr-2 gap-2`}
                             >
                                 {getSearchInput()}
 
                                 {env.flags.enableClients && (
-                                    <TabsList className="grid grid-cols-2 sm:max-w-sm">
+                                    <TabsList className="grid grid-cols-2 w-full">
                                         <TabsTrigger value="proxy">
                                             {t("resourcesTableProxyResources")}
                                         </TabsTrigger>
@@ -982,7 +982,7 @@ export default function ResourcesTable({
                                     </TabsList>
                                 )}
                             </div>
-                            <div className="flex gap-2 sm:justify-end ">
+                            <div className="flex gap-2 md:justify-end ">
                                 <div>
                                     <Button
                                         variant="outline"
