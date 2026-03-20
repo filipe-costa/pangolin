@@ -28,10 +28,19 @@ import { createApiClient, formatAxiosError } from "@app/lib/api";
 import { toast } from "@app/hooks/useToast";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useTransition } from "react";
-import { Check, Ban, Shield, ShieldOff, Clock, CheckCircle2, XCircle } from "lucide-react";
+import {
+    Check,
+    Ban,
+    Shield,
+    ShieldOff,
+    Clock,
+    CheckCircle2,
+    XCircle
+} from "lucide-react";
 import { useParams } from "next/navigation";
 import { FaApple, FaWindows, FaLinux } from "react-icons/fa";
 import { SiAndroid } from "react-icons/si";
+import { tierMatrix } from "@server/lib/billing/tierMatrix";
 
 function formatTimestamp(timestamp: number | null | undefined): string {
     if (!timestamp) return "-";
@@ -111,13 +120,13 @@ function getPlatformFieldConfig(
             osVersion: { show: true, labelKey: "iosVersion" },
             kernelVersion: { show: false, labelKey: "kernelVersion" },
             arch: { show: true, labelKey: "architecture" },
-            deviceModel: { show: true, labelKey: "deviceModel" },
+            deviceModel: { show: true, labelKey: "deviceModel" }
         },
         android: {
             osVersion: { show: true, labelKey: "androidVersion" },
             kernelVersion: { show: true, labelKey: "kernelVersion" },
             arch: { show: true, labelKey: "architecture" },
-            deviceModel: { show: true, labelKey: "deviceModel" },
+            deviceModel: { show: true, labelKey: "deviceModel" }
         },
         unknown: {
             osVersion: { show: true, labelKey: "osVersion" },
@@ -133,7 +142,6 @@ function getPlatformFieldConfig(
     return configs[normalizedPlatform] || configs.unknown;
 }
 
-
 export default function GeneralPage() {
     const { client, updateClient } = useClientContext();
     const { isPaidUser } = usePaidStatus();
@@ -145,11 +153,13 @@ export default function GeneralPage() {
     const [approvalId, setApprovalId] = useState<number | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [, startTransition] = useTransition();
+    const { env } = useEnvContext();
 
-    const showApprovalFeatures = build !== "oss" && isPaidUser;
+    const showApprovalFeatures =
+        build !== "oss" && isPaidUser(tierMatrix.deviceApprovals);
 
-    const formatPostureValue = (value: boolean | null | undefined) => {
-        if (value === null || value === undefined) return "-";
+    const formatPostureValue = (value: boolean | null | undefined | "-") => {
+        if (value === null || value === undefined || value === "-") return "-";
         return (
             <div className="flex items-center gap-2">
                 {value ? (
@@ -423,7 +433,8 @@ export default function GeneralPage() {
                                                         {t(
                                                             fieldConfig
                                                                 .osVersion
-                                                                ?.labelKey || "osVersion"
+                                                                ?.labelKey ||
+                                                                "osVersion"
                                                         )}
                                                     </InfoSectionTitle>
                                                     <InfoSectionContent>
@@ -559,8 +570,7 @@ export default function GeneralPage() {
                 </SettingsSection>
             )}
 
-            {/* Device Security Section */}
-            {build !== "oss" && (
+            {!env.flags.disableEnterpriseFeatures && (
                 <SettingsSection>
                     <SettingsSectionHeader>
                         <SettingsSectionTitle>
@@ -572,20 +582,28 @@ export default function GeneralPage() {
                     </SettingsSectionHeader>
 
                     <SettingsSectionBody>
-                        {client.posture && Object.keys(client.posture).length > 0 ? (
+                        <PaidFeaturesAlert tiers={tierMatrix.devicePosture} />
+
+                        {client.posture &&
+                        Object.keys(client.posture).length > 0 ? (
                             <>
-                                {!isPaidUser && <PaidFeaturesAlert />}
                                 <InfoSections cols={3}>
-                                    {client.posture.biometricsEnabled !== null &&
-                                        client.posture.biometricsEnabled !== undefined && (
+                                    {client.posture.biometricsEnabled !==
+                                        null &&
+                                        client.posture.biometricsEnabled !==
+                                            undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
                                                     {t("biometricsEnabled")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
-                                                              client.posture.biometricsEnabled
+                                                              client.posture
+                                                                  .biometricsEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
@@ -593,15 +611,20 @@ export default function GeneralPage() {
                                         )}
 
                                     {client.posture.diskEncrypted !== null &&
-                                        client.posture.diskEncrypted !== undefined && (
+                                        client.posture.diskEncrypted !==
+                                            undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
                                                     {t("diskEncrypted")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
-                                                              client.posture.diskEncrypted
+                                                              client.posture
+                                                                  .diskEncrypted ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
@@ -609,31 +632,42 @@ export default function GeneralPage() {
                                         )}
 
                                     {client.posture.firewallEnabled !== null &&
-                                        client.posture.firewallEnabled !== undefined && (
+                                        client.posture.firewallEnabled !==
+                                            undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
                                                     {t("firewallEnabled")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
-                                                              client.posture.firewallEnabled
+                                                              client.posture
+                                                                  .firewallEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
                                             </InfoSection>
                                         )}
 
-                                    {client.posture.autoUpdatesEnabled !== null &&
-                                        client.posture.autoUpdatesEnabled !== undefined && (
+                                    {client.posture.autoUpdatesEnabled !==
+                                        null &&
+                                        client.posture.autoUpdatesEnabled !==
+                                            undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
                                                     {t("autoUpdatesEnabled")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
-                                                              client.posture.autoUpdatesEnabled
+                                                              client.posture
+                                                                  .autoUpdatesEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
@@ -641,32 +675,45 @@ export default function GeneralPage() {
                                         )}
 
                                     {client.posture.tpmAvailable !== null &&
-                                        client.posture.tpmAvailable !== undefined && (
+                                        client.posture.tpmAvailable !==
+                                            undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
                                                     {t("tpmAvailable")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
-                                                              client.posture.tpmAvailable
+                                                              client.posture
+                                                                  .tpmAvailable ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
                                             </InfoSection>
                                         )}
 
-                                    {client.posture.windowsAntivirusEnabled !== null &&
-                                        client.posture.windowsAntivirusEnabled !== undefined && (
+                                    {client.posture.windowsAntivirusEnabled !==
+                                        null &&
+                                        client.posture
+                                            .windowsAntivirusEnabled !==
+                                            undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
-                                                    {t("windowsAntivirusEnabled")}
+                                                    {t(
+                                                        "windowsAntivirusEnabled"
+                                                    )}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
                                                               client.posture
-                                                                  .windowsAntivirusEnabled
+                                                                  .windowsAntivirusEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
@@ -674,58 +721,78 @@ export default function GeneralPage() {
                                         )}
 
                                     {client.posture.macosSipEnabled !== null &&
-                                        client.posture.macosSipEnabled !== undefined && (
+                                        client.posture.macosSipEnabled !==
+                                            undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
                                                     {t("macosSipEnabled")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
-                                                              client.posture.macosSipEnabled
+                                                              client.posture
+                                                                  .macosSipEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
                                             </InfoSection>
                                         )}
 
-                                    {client.posture.macosGatekeeperEnabled !== null &&
-                                        client.posture.macosGatekeeperEnabled !==
+                                    {client.posture.macosGatekeeperEnabled !==
+                                        null &&
+                                        client.posture
+                                            .macosGatekeeperEnabled !==
                                             undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
-                                                    {t("macosGatekeeperEnabled")}
+                                                    {t(
+                                                        "macosGatekeeperEnabled"
+                                                    )}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
                                                               client.posture
-                                                                  .macosGatekeeperEnabled
+                                                                  .macosGatekeeperEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
                                             </InfoSection>
                                         )}
 
-                                    {client.posture.macosFirewallStealthMode !== null &&
-                                        client.posture.macosFirewallStealthMode !==
+                                    {client.posture.macosFirewallStealthMode !==
+                                        null &&
+                                        client.posture
+                                            .macosFirewallStealthMode !==
                                             undefined && (
                                             <InfoSection>
                                                 <InfoSectionTitle>
-                                                    {t("macosFirewallStealthMode")}
+                                                    {t(
+                                                        "macosFirewallStealthMode"
+                                                    )}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
                                                               client.posture
-                                                                  .macosFirewallStealthMode
+                                                                  .macosFirewallStealthMode ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
                                             </InfoSection>
                                         )}
 
-                                    {client.posture.linuxAppArmorEnabled !== null &&
+                                    {client.posture.linuxAppArmorEnabled !==
+                                        null &&
                                         client.posture.linuxAppArmorEnabled !==
                                             undefined && (
                                             <InfoSection>
@@ -733,17 +800,21 @@ export default function GeneralPage() {
                                                     {t("linuxAppArmorEnabled")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
                                                               client.posture
-                                                                  .linuxAppArmorEnabled
+                                                                  .linuxAppArmorEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>
                                             </InfoSection>
                                         )}
 
-                                    {client.posture.linuxSELinuxEnabled !== null &&
+                                    {client.posture.linuxSELinuxEnabled !==
+                                        null &&
                                         client.posture.linuxSELinuxEnabled !==
                                             undefined && (
                                             <InfoSection>
@@ -751,10 +822,13 @@ export default function GeneralPage() {
                                                     {t("linuxSELinuxEnabled")}
                                                 </InfoSectionTitle>
                                                 <InfoSectionContent>
-                                                    {isPaidUser
+                                                    {isPaidUser(
+                                                        tierMatrix.devicePosture
+                                                    )
                                                         ? formatPostureValue(
                                                               client.posture
-                                                                  .linuxSELinuxEnabled
+                                                                  .linuxSELinuxEnabled ===
+                                                                  true
                                                           )
                                                         : "-"}
                                                 </InfoSectionContent>

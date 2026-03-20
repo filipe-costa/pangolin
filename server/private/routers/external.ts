@@ -25,13 +25,15 @@ import * as logs from "#private/routers/auditLogs";
 import * as misc from "#private/routers/misc";
 import * as reKey from "#private/routers/re-key";
 import * as approval from "#private/routers/approvals";
+import * as ssh from "#private/routers/ssh";
 
 import {
     verifyOrgAccess,
     verifyUserHasAction,
     verifyUserIsServerAdmin,
     verifySiteAccess,
-    verifyClientAccess
+    verifyClientAccess,
+    verifyLimits
 } from "@server/middlewares";
 import { ActionsEnum } from "@server/auth/actions";
 import {
@@ -52,6 +54,7 @@ import {
     authenticated as a,
     authRouter as aa
 } from "@server/routers/external";
+import { tierMatrix } from "@server/lib/billing/tierMatrix";
 
 export const authenticated = a;
 export const unauthenticated = ua;
@@ -76,7 +79,9 @@ unauthenticated.post(
 authenticated.put(
     "/org/:orgId/idp/oidc",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.orgOidc),
     verifyOrgAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.createIdp),
     logActionAudit(ActionsEnum.createIdp),
     orgIdp.createOrgOidcIdp
@@ -85,8 +90,10 @@ authenticated.put(
 authenticated.post(
     "/org/:orgId/idp/:idpId/oidc",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.orgOidc),
     verifyOrgAccess,
     verifyIdpAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.updateIdp),
     logActionAudit(ActionsEnum.updateIdp),
     orgIdp.updateOrgOidcIdp
@@ -135,35 +142,27 @@ authenticated.post(
     verifyValidLicense,
     verifyOrgAccess,
     verifyCertificateAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.restartCertificate),
     logActionAudit(ActionsEnum.restartCertificate),
     certificates.restartCertificate
 );
 
 if (build === "saas") {
-    unauthenticated.post(
-        "/quick-start",
-        rateLimit({
-            windowMs: 15 * 60 * 1000,
-            max: 100,
-            keyGenerator: (req) => req.path,
-            handler: (req, res, next) => {
-                const message = `We're too busy right now. Please try again later.`;
-                return next(
-                    createHttpError(HttpCode.TOO_MANY_REQUESTS, message)
-                );
-            },
-            store: createStore()
-        }),
-        auth.quickStart
-    );
-
     authenticated.post(
         "/org/:orgId/billing/create-checkout-session",
         verifyOrgAccess,
         verifyUserHasAction(ActionsEnum.billing),
         logActionAudit(ActionsEnum.billing),
         billing.createCheckoutSession
+    );
+
+    authenticated.post(
+        "/org/:orgId/billing/change-tier",
+        verifyOrgAccess,
+        verifyUserHasAction(ActionsEnum.billing),
+        logActionAudit(ActionsEnum.billing),
+        billing.changeTier
     );
 
     authenticated.post(
@@ -175,10 +174,10 @@ if (build === "saas") {
     );
 
     authenticated.get(
-        "/org/:orgId/billing/subscription",
+        "/org/:orgId/billing/subscriptions",
         verifyOrgAccess,
         verifyUserHasAction(ActionsEnum.billing),
-        billing.getOrgSubscription
+        billing.getOrgSubscriptions
     );
 
     authenticated.get(
@@ -198,6 +197,14 @@ if (build === "saas") {
         "/org/:orgId/license",
         verifyOrgAccess,
         generateLicense.generateNewLicense
+    );
+
+    authenticated.put(
+        "/org/:orgId/license/enterprise",
+        verifyOrgAccess,
+        verifyUserHasAction(ActionsEnum.billing),
+        logActionAudit(ActionsEnum.billing),
+        generateLicense.generateNewEnterpriseLicense
     );
 
     authenticated.post(
@@ -235,6 +242,7 @@ authenticated.put(
     "/org/:orgId/remote-exit-node",
     verifyValidLicense,
     verifyOrgAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.createRemoteExitNode),
     logActionAudit(ActionsEnum.createRemoteExitNode),
     remoteExitNode.createRemoteExitNode
@@ -278,7 +286,9 @@ authenticated.delete(
 authenticated.put(
     "/org/:orgId/login-page",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.loginPageDomain),
     verifyOrgAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.createLoginPage),
     logActionAudit(ActionsEnum.createLoginPage),
     loginPage.createLoginPage
@@ -287,8 +297,10 @@ authenticated.put(
 authenticated.post(
     "/org/:orgId/login-page/:loginPageId",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.loginPageDomain),
     verifyOrgAccess,
     verifyLoginPageAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.updateLoginPage),
     logActionAudit(ActionsEnum.updateLoginPage),
     loginPage.updateLoginPage
@@ -315,6 +327,7 @@ authenticated.get(
 authenticated.get(
     "/org/:orgId/approvals",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.deviceApprovals),
     verifyOrgAccess,
     verifyUserHasAction(ActionsEnum.listApprovals),
     logActionAudit(ActionsEnum.listApprovals),
@@ -331,7 +344,9 @@ authenticated.get(
 authenticated.put(
     "/org/:orgId/approvals/:approvalId",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.deviceApprovals),
     verifyOrgAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.updateApprovals),
     logActionAudit(ActionsEnum.updateApprovals),
     approval.processPendingApproval
@@ -340,6 +355,7 @@ authenticated.put(
 authenticated.get(
     "/org/:orgId/login-page-branding",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.loginPageBranding),
     verifyOrgAccess,
     verifyUserHasAction(ActionsEnum.getLoginPage),
     logActionAudit(ActionsEnum.getLoginPage),
@@ -349,7 +365,9 @@ authenticated.get(
 authenticated.put(
     "/org/:orgId/login-page-branding",
     verifyValidLicense,
+    verifyValidSubscription(tierMatrix.loginPageBranding),
     verifyOrgAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.updateLoginPage),
     logActionAudit(ActionsEnum.updateLoginPage),
     loginPage.upsertLoginPageBranding
@@ -425,7 +443,7 @@ authenticated.post(
 authenticated.get(
     "/org/:orgId/logs/action",
     verifyValidLicense,
-    verifyValidSubscription,
+    verifyValidSubscription(tierMatrix.actionLogs),
     verifyOrgAccess,
     verifyUserHasAction(ActionsEnum.exportLogs),
     logs.queryActionAuditLogs
@@ -434,7 +452,7 @@ authenticated.get(
 authenticated.get(
     "/org/:orgId/logs/action/export",
     verifyValidLicense,
-    verifyValidSubscription,
+    verifyValidSubscription(tierMatrix.logExport),
     verifyOrgAccess,
     verifyUserHasAction(ActionsEnum.exportLogs),
     logActionAudit(ActionsEnum.exportLogs),
@@ -444,7 +462,7 @@ authenticated.get(
 authenticated.get(
     "/org/:orgId/logs/access",
     verifyValidLicense,
-    verifyValidSubscription,
+    verifyValidSubscription(tierMatrix.accessLogs),
     verifyOrgAccess,
     verifyUserHasAction(ActionsEnum.exportLogs),
     logs.queryAccessAuditLogs
@@ -453,7 +471,7 @@ authenticated.get(
 authenticated.get(
     "/org/:orgId/logs/access/export",
     verifyValidLicense,
-    verifyValidSubscription,
+    verifyValidSubscription(tierMatrix.logExport),
     verifyOrgAccess,
     verifyUserHasAction(ActionsEnum.exportLogs),
     logActionAudit(ActionsEnum.exportLogs),
@@ -464,7 +482,8 @@ authenticated.post(
     "/re-key/:clientId/regenerate-client-secret",
     verifyClientAccess, // this is first to set the org id
     verifyValidLicense,
-    verifyValidSubscription,
+    verifyValidSubscription(tierMatrix.rotateCredentials),
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.reGenerateSecret),
     reKey.reGenerateClientSecret
 );
@@ -473,7 +492,8 @@ authenticated.post(
     "/re-key/:siteId/regenerate-site-secret",
     verifySiteAccess, // this is first to set the org id
     verifyValidLicense,
-    verifyValidSubscription,
+    verifyValidSubscription(tierMatrix.rotateCredentials),
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.reGenerateSecret),
     reKey.reGenerateSiteSecret
 );
@@ -481,8 +501,20 @@ authenticated.post(
 authenticated.put(
     "/re-key/:orgId/regenerate-remote-exit-node-secret",
     verifyValidLicense,
-    verifyValidSubscription,
+    verifyValidSubscription(tierMatrix.rotateCredentials),
     verifyOrgAccess,
+    verifyLimits,
     verifyUserHasAction(ActionsEnum.reGenerateSecret),
     reKey.reGenerateExitNodeSecret
+);
+
+authenticated.post(
+    "/org/:orgId/ssh/sign-key",
+    verifyValidLicense,
+    verifyValidSubscription(tierMatrix.sshPam),
+    verifyOrgAccess,
+    verifyLimits,
+    verifyUserHasAction(ActionsEnum.signSshKey),
+    // logActionAudit(ActionsEnum.signSshKey), // it is handled inside of the function below so we can include more metadata
+    ssh.signSshKey
 );

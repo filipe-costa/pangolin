@@ -5,16 +5,12 @@ import DeleteRoleForm from "@app/components/DeleteRoleForm";
 import { RolesDataTable } from "@app/components/RolesDataTable";
 import { Button } from "@app/components/ui/button";
 import { ExtendedColumnDef } from "@app/components/ui/data-table";
-import { useEnvContext } from "@app/hooks/useEnvContext";
-import { useOrgContext } from "@app/hooks/useOrgContext";
 import { toast } from "@app/hooks/useToast";
-import { createApiClient } from "@app/lib/api";
 import { Role } from "@server/db";
-import { ArrowRight, ArrowUpDown, Link, MoreHorizontal } from "lucide-react";
+import { ArrowUpDown, MoreHorizontal } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { usePaidStatus } from "@app/hooks/usePaidStatus";
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -37,11 +33,6 @@ export default function UsersTable({ roles }: RolesTableProps) {
     const router = useRouter();
 
     const [roleToRemove, setRoleToRemove] = useState<RoleRow | null>(null);
-
-    const api = createApiClient(useEnvContext());
-
-    const { org } = useOrgContext();
-    const { isPaidUser } = usePaidStatus();
 
     const t = useTranslations();
     const [isRefreshing, startTransition] = useTransition();
@@ -112,45 +103,46 @@ export default function UsersTable({ roles }: RolesTableProps) {
             header: () => <span className="p-3"></span>,
             cell: ({ row }) => {
                 const roleRow = row.original;
+                const isAdmin = roleRow.isAdmin;
                 return (
-                    !roleRow.isAdmin && (
-                        <div className="flex items-center gap-2 justify-end">
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        className="h-8 w-8 p-0"
-                                    >
-                                        <span className="sr-only">
-                                            {t("openMenu")}
-                                        </span>
-                                        <MoreHorizontal className="h-4 w-4" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuItem
-                                        onClick={() => {
-                                            setRoleToRemove(roleRow);
-                                            setIsDeleteModalOpen(true);
-                                        }}
-                                    >
-                                        <span className="text-red-500">
-                                            {t("delete")}
-                                        </span>
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
-                            <Button
-                                variant={"outline"}
-                                onClick={() => {
-                                    setEditingRole(roleRow);
-                                    setIsEditDialogOpen(true);
-                                }}
-                            >
-                                {t("edit")}
-                            </Button>
-                        </div>
-                    )
+                    <div className="flex items-center gap-2 justify-end">
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    className="h-8 w-8 p-0"
+                                    disabled={isAdmin || false}
+                                >
+                                    <span className="sr-only">
+                                        {t("openMenu")}
+                                    </span>
+                                    <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                    disabled={isAdmin || false}
+                                    onClick={() => {
+                                        setRoleToRemove(roleRow);
+                                        setIsDeleteModalOpen(true);
+                                    }}
+                                >
+                                    <span className="text-red-500">
+                                        {t("delete")}
+                                    </span>
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                        <Button
+                            variant={"outline"}
+                            onClick={() => {
+                                setEditingRole(roleRow);
+                                setIsEditDialogOpen(true);
+                            }}
+                        >
+                            {t("edit")}
+                        </Button>
+                    </div>
                 );
             }
         }

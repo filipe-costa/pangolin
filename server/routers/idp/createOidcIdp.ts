@@ -37,7 +37,7 @@ registry.registerPath({
     method: "put",
     path: "/idp/oidc",
     description: "Create an OIDC IdP.",
-    tags: [OpenAPITags.Idp],
+    tags: [OpenAPITags.GlobalIdp],
     request: {
         body: {
             content: {
@@ -80,6 +80,17 @@ export async function createOidcIdp(
             tags
         } = parsedBody.data;
 
+        if (
+            process.env.IDENTITY_PROVIDER_MODE === "org"
+        ) {
+            return next(
+                createHttpError(
+                    HttpCode.BAD_REQUEST,
+                    "Global IdP creation is not allowed in the current identity provider mode. Set app.identity_provider_mode to 'global' in the private configuration to enable this feature."
+                )
+            );
+        }
+
         const key = config.getRawConfig().server.secret!;
 
         const encryptedSecret = encrypt(clientSecret, key);
@@ -93,7 +104,9 @@ export async function createOidcIdp(
                     name,
                     autoProvision,
                     type: "oidc",
-                    tags
+                    tags,
+                    defaultOrgMapping: `'{{orgId}}'`,
+                    defaultRoleMapping: `'Member'`
                 })
                 .returning();
 

@@ -8,7 +8,7 @@ import {
     SettingsSectionTitle
 } from "./Settings";
 import { CheckboxWithLabel } from "./ui/checkbox";
-import { Button } from "./ui/button";
+import { OptionSelect, type OptionSelectOption } from "./OptionSelect";
 import { useState } from "react";
 import { FaCubes, FaDocker, FaWindows } from "react-icons/fa";
 import { Terminal } from "lucide-react";
@@ -18,11 +18,11 @@ export type CommandItem = string | { title: string; command: string };
 
 const PLATFORMS = [
     "unix",
-    "windows",
     "docker",
     "kubernetes",
     "podman",
-    "nixos"
+    "nixos",
+    "windows"
 ] as const;
 
 type Platform = (typeof PLATFORMS)[number];
@@ -91,7 +91,7 @@ export function NewtSiteInstallCommands({
       - NEWT_SECRET=${secret}${acceptClientsEnv}`
             ],
             "Docker Run": [
-                `docker run -dit fosrl/newt --id ${id} --secret ${secret} --endpoint ${endpoint}${acceptClientsFlag}`
+                `docker run -dit --network host fosrl/newt --id ${id} --secret ${secret} --endpoint ${endpoint}${acceptClientsFlag}`
             ]
         },
         kubernetes: {
@@ -101,6 +101,7 @@ export function NewtSiteInstallCommands({
                 `helm install newt fossorial/newt \\
     --create-namespace \\
     --set newtInstances[0].name="main-tunnel" \\
+    --set newtInstances[0].enabled=true \\
     --set-string newtInstances[0].auth.keys.endpointKey="${endpoint}" \\
     --set-string newtInstances[0].auth.keys.idKey="${id}" \\
     --set-string newtInstances[0].auth.keys.secretKey="${secret}"`
@@ -138,6 +139,14 @@ WantedBy=default.target`
 
     const commands = commandList[platform][architecture];
 
+    const platformOptions: OptionSelectOption<Platform>[] = PLATFORMS.map(
+        (os) => ({
+            value: os,
+            label: getPlatformName(os),
+            icon: getPlatformIcon(os)
+        })
+    );
+
     return (
         <SettingsSection>
             <SettingsSectionHeader>
@@ -149,106 +158,98 @@ WantedBy=default.target`
                 </SettingsSectionDescription>
             </SettingsSectionHeader>
             <SettingsSectionBody>
-                <div>
-                    <p className="font-bold mb-3">{t("operatingSystem")}</p>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                        {PLATFORMS.map((os) => (
-                            <Button
-                                key={os}
-                                variant={
-                                    platform === os
-                                        ? "squareOutlinePrimary"
-                                        : "squareOutline"
-                                }
-                                className={`flex-1 min-w-30 ${platform === os ? "bg-primary/10" : ""} shadow-none`}
-                                onClick={() => {
-                                    setPlatform(os);
-                                    const architectures = getArchitectures(os);
-                                    setArchitecture(architectures[0]);
-                                }}
-                            >
-                                {getPlatformIcon(os)}
-                                {getPlatformName(os)}
-                            </Button>
-                        ))}
+                <OptionSelect<Platform>
+                    label={t("operatingSystem")}
+                    options={platformOptions}
+                    value={platform}
+                    onChange={(os) => {
+                        setPlatform(os);
+                        const architectures = getArchitectures(os);
+                        setArchitecture(architectures[0]);
+                    }}
+                    cols={5}
+                />
+
+                <OptionSelect<string>
+                    label={
+                        ["docker", "podman"].includes(platform)
+                            ? t("method")
+                            : t("architecture")
+                    }
+                    options={getArchitectures(platform).map((arch) => ({
+                        value: arch,
+                        label: arch
+                    }))}
+                    value={architecture}
+                    onChange={setArchitecture}
+                    cols={5}
+                    className="mt-4"
+                />
+
+                <div className="pt-4">
+                    <p className="font-bold mb-3">{t("siteConfiguration")}</p>
+                    <div className="flex items-center space-x-2 mb-2">
+                        <CheckboxWithLabel
+                            id="acceptClients"
+                            aria-describedby="acceptClients-desc"
+                            checked={acceptClients}
+                            onCheckedChange={(checked) => {
+                                const value = checked as boolean;
+                                setAcceptClients(value);
+                            }}
+                            label={t("siteAcceptClientConnections")}
+                        />
                     </div>
+                    <p
+                        id="acceptClients-desc"
+                        className="text-sm text-muted-foreground"
+                    >
+                        {t("siteAcceptClientConnectionsDescription")}
+                    </p>
                 </div>
 
-                <div>
-                    <p className="font-bold mb-3">
-                        {["docker", "podman"].includes(platform)
-                            ? t("method")
-                            : t("architecture")}
-                    </p>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                        {getArchitectures(platform).map((arch) => (
-                            <Button
-                                key={arch}
-                                variant={
-                                    architecture === arch
-                                        ? "squareOutlinePrimary"
-                                        : "squareOutline"
-                                }
-                                className={`flex-1 min-w-30 ${architecture === arch ? "bg-primary/10" : ""} shadow-none`}
-                                onClick={() => setArchitecture(arch)}
+                <div className="pt-4">
+                    <p className="font-bold mb-3">{t("commands")}</p>
+                    {platform === "kubernetes" && (
+                        <p className="text-sm text-muted-foreground mb-3">
+                            For more and up to date Kubernetes installation
+                            information, see{" "}
+                            <a
+                                href="https://docs.pangolin.net/manage/sites/install-kubernetes"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="underline"
                             >
-                                {arch}
-                            </Button>
-                        ))}
-                    </div>
-
-                    <div className="pt-4">
-                        <p className="font-bold mb-3">
-                            {t("siteConfiguration")}
+                                docs.pangolin.net/manage/sites/install-kubernetes
+                            </a>
+                            .
                         </p>
-                        <div className="flex items-center space-x-2 mb-2">
-                            <CheckboxWithLabel
-                                id="acceptClients"
-                                aria-describedby="acceptClients-desc"
-                                checked={acceptClients}
-                                onCheckedChange={(checked) => {
-                                    const value = checked as boolean;
-                                    setAcceptClients(value);
-                                }}
-                                label={t("siteAcceptClientConnections")}
-                            />
-                        </div>
-                        <p
-                            id="acceptClients-desc"
-                            className="text-sm text-muted-foreground"
-                        >
-                            {t("siteAcceptClientConnectionsDescription")}
-                        </p>
-                    </div>
+                    )}
+                    <div className="mt-2 space-y-3">
+                        {commands.map((item, index) => {
+                            const commandText =
+                                typeof item === "string" ? item : item.command;
+                            const title =
+                                typeof item === "string"
+                                    ? undefined
+                                    : item.title;
 
-                    <div className="pt-4">
-                        <p className="font-bold mb-3">{t("commands")}</p>
-                        <div className="mt-2 space-y-3">
-                            {commands.map((item, index) => {
-                                const commandText =
-                                    typeof item === "string"
-                                        ? item
-                                        : item.command;
-                                const title =
-                                    typeof item === "string"
-                                        ? undefined
-                                        : item.title;
+                            const key = `${title ?? ""}::${commandText}`;
 
-                                return (
-                                    <div key={index}>
-                                        {title && (
-                                            <p className="text-sm font-medium mb-1.5">
-                                                {title}
-                                            </p>
-                                        )}
-                                        <CopyTextBox
-                                            text={commandText}
-                                            outline={true}
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
+                            return (
+                                <div key={key}>
+                                    {title && (
+                                        <p className="text-sm font-medium mb-1.5">
+                                            {title}
+                                        </p>
+                                    )}
+                                    <CopyTextBox
+                                        text={commandText}
+                                        outline={true}
+                                    />
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             </SettingsSectionBody>

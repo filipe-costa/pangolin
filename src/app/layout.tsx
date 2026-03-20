@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Geist, Inter, Manrope, Open_Sans } from "next/font/google";
 import { ThemeProvider } from "@app/providers/ThemeProvider";
 import EnvProvider from "@app/providers/EnvProvider";
 import { pullEnv } from "@app/lib/pullEnv";
 import ThemeDataProvider from "@app/providers/ThemeDataProvider";
-import SplashImage from "@app/components/private/SplashImage";
+import SplashImage from "@app/components/SplashImage";
 import SupportStatusProvider from "@app/providers/SupporterStatusProvider";
 import { priv } from "@app/lib/api";
 import { AxiosResponse } from "axios";
@@ -23,6 +22,8 @@ import Script from "next/script";
 import { TanstackQueryProvider } from "@app/components/TanstackQueryProvider";
 import { TailwindIndicator } from "@app/components/TailwindIndicator";
 import { ViewportHeightFix } from "@app/components/ViewportHeightFix";
+import StoreInternalRedirect from "@app/components/StoreInternalRedirect";
+import { Inter } from "next/font/google";
 
 export const metadata: Metadata = {
     title: `Dashboard - ${process.env.BRANDING_APP_NAME || "Pangolin"}`,
@@ -31,9 +32,11 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-const font = Inter({
+const inter = Inter({
     subsets: ["latin"]
 });
+
+const fontClassName = inter.className;
 
 export default async function RootLayout({
     children
@@ -78,15 +81,16 @@ export default async function RootLayout({
 
     return (
         <html suppressHydrationWarning lang={locale}>
-            <body className={`${font.className} h-screen-safe overflow-hidden`}>
+            <body className={`${fontClassName} h-screen-safe overflow-hidden`}>
+                <StoreInternalRedirect />
                 <TopLoader />
-                {build === "saas" && (
+                {/* build === "saas" && (
                     <Script
                         src="https://rybbit.fossorial.io/api/script.js"
                         data-site-id="fe1ff2a33287"
                         strategy="afterInteractive"
                     />
-                )}
+                )*/}
                 <ViewportHeightFix />
                 <NextIntlClientProvider>
                     <ThemeProvider
@@ -123,9 +127,9 @@ export default async function RootLayout({
                     </ThemeProvider>
                 </NextIntlClientProvider>
 
-                {process.env.NODE_ENV === "development" && (
+                {/*process.env.NODE_ENV === "development" && (
                     <TailwindIndicator />
-                )}
+                )*/}
             </body>
         </html>
     );

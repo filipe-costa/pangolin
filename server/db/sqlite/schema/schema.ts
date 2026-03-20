@@ -1,13 +1,6 @@
 import { randomUUID } from "crypto";
 import { InferSelectModel } from "drizzle-orm";
-import {
-    sqliteTable,
-    text,
-    integer,
-    index,
-    uniqueIndex
-} from "drizzle-orm/sqlite-core";
-import { no } from "zod/v4/locales";
+import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const domains = sqliteTable("domains", {
     domainId: text("domainId").primaryKey(),
@@ -20,7 +13,8 @@ export const domains = sqliteTable("domains", {
     failed: integer("failed", { mode: "boolean" }).notNull().default(false),
     tries: integer("tries").notNull().default(0),
     certResolver: text("certResolver"),
-    preferWildcardCert: integer("preferWildcardCert", { mode: "boolean" })
+    preferWildcardCert: integer("preferWildcardCert", { mode: "boolean" }),
+    errorMessage: text("errorMessage")
 });
 
 export const dnsRecords = sqliteTable("dnsRecords", {
@@ -52,7 +46,11 @@ export const orgs = sqliteTable("orgs", {
         .default(0),
     settingsLogRetentionDaysAction: integer("settingsLogRetentionDaysAction") // where 0 = dont keep logs and -1 = keep forever and 9001 = end of the following year
         .notNull()
-        .default(0)
+        .default(0),
+    sshCaPrivateKey: text("sshCaPrivateKey"), // Encrypted SSH CA private key (PEM format)
+    sshCaPublicKey: text("sshCaPublicKey"), // SSH CA public key (OpenSSH format)
+    isBillingOrg: integer("isBillingOrg", { mode: "boolean" }),
+    billingOrgId: text("billingOrgId")
 });
 
 export const userDomains = sqliteTable("userDomains", {
@@ -92,6 +90,7 @@ export const sites = sqliteTable("sites", {
     lastBandwidthUpdate: text("lastBandwidthUpdate"),
     type: text("type").notNull(), // "newt" or "wireguard"
     online: integer("online", { mode: "boolean" }).notNull().default(false),
+    lastPing: integer("lastPing"),
 
     // exit node stuff that is how to connect to the site when it has a wg server
     address: text("address"), // this is the address of the wireguard interface in newt
@@ -162,7 +161,8 @@ export const resources = sqliteTable("resources", {
     }).default("forced"), // "forced" = always show, "automatic" = only when down
     maintenanceTitle: text("maintenanceTitle"),
     maintenanceMessage: text("maintenanceMessage"),
-    maintenanceEstimatedTime: text("maintenanceEstimatedTime")
+    maintenanceEstimatedTime: text("maintenanceEstimatedTime"),
+    postAuthPath: text("postAuthPath")
 });
 
 export const targets = sqliteTable("targets", {
@@ -213,7 +213,9 @@ export const targetHealthCheck = sqliteTable("targetHealthCheck", {
     }).default(true),
     hcMethod: text("hcMethod").default("GET"),
     hcStatus: integer("hcStatus"), // http code
-    hcHealth: text("hcHealth").default("unknown"), // "unknown", "healthy", "unhealthy"
+    hcHealth: text("hcHealth")
+        .$type<"unknown" | "healthy" | "unhealthy">()
+        .default("unknown"), // "unknown", "healthy", "unhealthy"
     hcTlsServerName: text("hcTlsServerName")
 });
 
@@ -245,7 +247,7 @@ export const siteResources = sqliteTable("siteResources", {
         .references(() => orgs.orgId, { onDelete: "cascade" }),
     niceId: text("niceId").notNull(),
     name: text("name").notNull(),
-    mode: text("mode").notNull(), // "host" | "cidr" | "port"
+    mode: text("mode").$type<"host" | "cidr">().notNull(), // "host" | "cidr" | "port"
     protocol: text("protocol"), // only for port mode
     proxyPort: integer("proxyPort"), // only for port mode
     destinationPort: integer("destinationPort"), // only for port mode
@@ -257,7 +259,11 @@ export const siteResources = sqliteTable("siteResources", {
     udpPortRangeString: text("udpPortRangeString").notNull().default("*"),
     disableIcmp: integer("disableIcmp", { mode: "boolean" })
         .notNull()
-        .default(false)
+        .default(false),
+    authDaemonPort: integer("authDaemonPort").default(22123),
+    authDaemonMode: text("authDaemonMode")
+        .$type<"site" | "remote">()
+        .default("site")
 });
 
 export const clientSiteResources = sqliteTable("clientSiteResources", {
@@ -310,6 +316,9 @@ export const users = sqliteTable("user", {
     dateCreated: text("dateCreated").notNull(),
     termsAcceptedTimestamp: text("termsAcceptedTimestamp"),
     termsVersion: text("termsVersion"),
+    marketingEmailConsent: integer("marketingEmailConsent", {
+        mode: "boolean"
+    }).default(false),
     serverAdmin: integer("serverAdmin", { mode: "boolean" })
         .notNull()
         .default(false),
@@ -400,6 +409,9 @@ export const clientSitesAssociationsCache = sqliteTable(
             .notNull(),
         siteId: integer("siteId").notNull(),
         isRelayed: integer("isRelayed", { mode: "boolean" })
+            .notNull()
+            .default(false),
+        isJitMode: integer("isJitMode", { mode: "boolean" })
             .notNull()
             .default(false),
         endpoint: text("endpoint"),
@@ -637,7 +649,8 @@ export const userOrgs = sqliteTable("userOrgs", {
     isOwner: integer("isOwner", { mode: "boolean" }).notNull().default(false),
     autoProvisioned: integer("autoProvisioned", {
         mode: "boolean"
-    }).default(false)
+    }).default(false),
+    pamUsername: text("pamUsername") // cleaned username for ssh and such
 });
 
 export const emailVerificationCodes = sqliteTable("emailVerificationCodes", {
@@ -678,7 +691,13 @@ export const roles = sqliteTable("roles", {
     description: text("description"),
     requireDeviceApproval: integer("requireDeviceApproval", {
         mode: "boolean"
-    }).default(false)
+    }).default(false),
+    sshSudoMode: text("sshSudoMode").default("none"), // "none" | "full" | "commands"
+    sshSudoCommands: text("sshSudoCommands").default("[]"),
+    sshCreateHomeDir: integer("sshCreateHomeDir", { mode: "boolean" }).default(
+        true
+    ),
+    sshUnixGroups: text("sshUnixGroups").default("[]")
 });
 
 export const roleActions = sqliteTable("roleActions", {
@@ -1079,6 +1098,16 @@ export const deviceWebAuthCodes = sqliteTable("deviceWebAuthCodes", {
     })
 });
 
+export const roundTripMessageTracker = sqliteTable("roundTripMessageTracker", {
+    messageId: integer("messageId").primaryKey({ autoIncrement: true }),
+    wsClientId: text("clientId"),
+    messageType: text("messageType"),
+    sentAt: integer("sentAt").notNull(),
+    receivedAt: integer("receivedAt"),
+    error: text("error"),
+    complete: integer("complete", { mode: "boolean" }).notNull().default(false)
+});
+
 export type Org = InferSelectModel<typeof orgs>;
 export type User = InferSelectModel<typeof users>;
 export type Site = InferSelectModel<typeof sites>;
@@ -1140,3 +1169,6 @@ export type SecurityKey = InferSelectModel<typeof securityKeys>;
 export type WebauthnChallenge = InferSelectModel<typeof webauthnChallenge>;
 export type RequestAuditLog = InferSelectModel<typeof requestAuditLog>;
 export type DeviceWebAuthCode = InferSelectModel<typeof deviceWebAuthCodes>;
+export type RoundTripMessageTracker = InferSelectModel<
+    typeof roundTripMessageTracker
+>;

@@ -10,11 +10,11 @@ import {
     SettingsSectionHeader,
     SettingsSectionTitle
 } from "./Settings";
-import { Button } from "./ui/button";
+import { OptionSelect, type OptionSelectOption } from "./OptionSelect";
 
 export type CommandItem = string | { title: string; command: string };
 
-const PLATFORMS = ["unix", "windows", "docker"] as const;
+const PLATFORMS = ["unix", "docker", "windows"] as const;
 
 type Platform = (typeof PLATFORMS)[number];
 
@@ -43,32 +43,20 @@ export function OlmInstallCommands({
             All: [
                 {
                     title: t("install"),
-                    command: `curl -fsSL https://static.pangolin.net/get-olm.sh | bash`
+                    command: `curl -fsSL https://static.pangolin.net/get-cli.sh | sudo bash`
                 },
                 {
                     title: t("run"),
-                    command: `sudo olm --id ${id} --secret ${secret} --endpoint ${endpoint}`
-                }
-            ]
-        },
-        windows: {
-            x64: [
-                {
-                    title: t("install"),
-                    command: `curl -o olm.exe -L "https://github.com/fosrl/olm/releases/download/${version}/olm_windows_installer.exe"`
-                },
-                {
-                    title: t("run"),
-                    command: `olm.exe --id ${id} --secret ${secret} --endpoint ${endpoint}`
+                    command: `sudo pangolin up --id ${id} --secret ${secret} --endpoint ${endpoint} --attach`
                 }
             ]
         },
         docker: {
             "Docker Compose": [
                 `services:
-  olm:
-    image: fosrl/olm
-    container_name: olm
+  pangolin-cli:
+    image: fosrl/pangolin-cli
+    container_name: pangolin-cli
     restart: unless-stopped
     network_mode: host
     cap_add:
@@ -77,16 +65,38 @@ export function OlmInstallCommands({
       - /dev/net/tun:/dev/net/tun
     environment:
       - PANGOLIN_ENDPOINT=${endpoint}
-      - OLM_ID=${id}
-      - OLM_SECRET=${secret}`
+      - CLIENT_ID=${id}
+      - CLIENT_SECRET=${secret}`
             ],
             "Docker Run": [
-                `docker run -dit --network host --cap-add NET_ADMIN --device /dev/net/tun:/dev/net/tun fosrl/olm --id ${id} --secret ${secret} --endpoint ${endpoint}`
+                `docker run -dit --network host --cap-add NET_ADMIN --device /dev/net/tun:/dev/net/tun fosrl/pangolin-cli up client --id ${id} --secret ${secret} --endpoint ${endpoint} --attach`
+            ]
+        },
+        windows: {
+            x64: [
+                {
+                    title: t("install"),
+                    command: `# Download and run the installer to install Olm first\n
+curl -o olm.exe -L "https://github.com/fosrl/olm/releases/download/${version}/olm_windows_installer.exe"`
+                },
+                {
+                    title: t("run"),
+                    command: `olm.exe --id ${id} --secret ${secret} --endpoint ${endpoint}`
+                }
             ]
         }
     };
 
     const commands = commandList[platform][architecture];
+
+    const platformOptions: OptionSelectOption<Platform>[] = PLATFORMS.map(
+        (os) => ({
+            value: os,
+            label: getPlatformName(os),
+            icon: getPlatformIcon(os)
+        })
+    );
+
     return (
         <SettingsSection>
             <SettingsSectionHeader>
@@ -98,54 +108,35 @@ export function OlmInstallCommands({
                 </SettingsSectionDescription>
             </SettingsSectionHeader>
             <SettingsSectionBody>
-                <div>
-                    <p className="font-bold mb-3">{t("operatingSystem")}</p>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                        {PLATFORMS.map((os) => (
-                            <Button
-                                key={os}
-                                variant={
-                                    platform === os
-                                        ? "squareOutlinePrimary"
-                                        : "squareOutline"
-                                }
-                                className={`flex-1 min-w-30 ${platform === os ? "bg-primary/10" : ""} shadow-none`}
-                                onClick={() => {
-                                    setPlatform(os);
-                                    const architectures = getArchitectures(os);
-                                    setArchitecture(architectures[0]);
-                                }}
-                            >
-                                {getPlatformIcon(os)}
-                                {getPlatformName(os)}
-                            </Button>
-                        ))}
-                    </div>
-                </div>
+                <OptionSelect<Platform>
+                    label={t("operatingSystem")}
+                    options={platformOptions}
+                    value={platform}
+                    onChange={(os) => {
+                        setPlatform(os);
+                        const architectures = getArchitectures(os);
+                        setArchitecture(architectures[0]);
+                    }}
+                    cols={5}
+                />
 
-                <div>
-                    <p className="font-bold mb-3">
-                        {["docker", "podman"].includes(platform)
+                <OptionSelect<string>
+                    label={
+                        platform === "docker"
                             ? t("method")
-                            : t("architecture")}
-                    </p>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                        {getArchitectures(platform).map((arch) => (
-                            <Button
-                                key={arch}
-                                variant={
-                                    architecture === arch
-                                        ? "squareOutlinePrimary"
-                                        : "squareOutline"
-                                }
-                                className={`flex-1 min-w-30 ${architecture === arch ? "bg-primary/10" : ""} shadow-none`}
-                                onClick={() => setArchitecture(arch)}
-                            >
-                                {arch}
-                            </Button>
-                        ))}
-                    </div>
-                    <div className="pt-4">
+                            : t("architecture")
+                    }
+                    options={getArchitectures(platform).map((arch) => ({
+                        value: arch,
+                        label: arch
+                    }))}
+                    value={architecture}
+                    onChange={setArchitecture}
+                    cols={5}
+                    className="mt-4"
+                />
+
+                <div className="pt-4">
                         <p className="font-bold mb-3">{t("commands")}</p>
                         <div className="mt-2 space-y-3">
                             {commands.map((item, index) => {
@@ -173,7 +164,6 @@ export function OlmInstallCommands({
                                 );
                             })}
                         </div>
-                    </div>
                 </div>
             </SettingsSectionBody>
         </SettingsSection>

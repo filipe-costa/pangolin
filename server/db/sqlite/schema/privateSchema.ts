@@ -70,13 +70,16 @@ export const subscriptions = sqliteTable("subscriptions", {
     canceledAt: integer("canceledAt"),
     createdAt: integer("createdAt").notNull(),
     updatedAt: integer("updatedAt"),
-    billingCycleAnchor: integer("billingCycleAnchor")
+    version: integer("version"),
+    billingCycleAnchor: integer("billingCycleAnchor"),
+    type: text("type") // tier1, tier2, tier3, or license
 });
 
 export const subscriptionItems = sqliteTable("subscriptionItems", {
     subscriptionItemId: integer("subscriptionItemId").primaryKey({
         autoIncrement: true
     }),
+    stripeSubscriptionItemId: text("stripeSubscriptionItemId"),
     subscriptionId: text("subscriptionId")
         .notNull()
         .references(() => subscriptions.subscriptionId, {
@@ -84,6 +87,7 @@ export const subscriptionItems = sqliteTable("subscriptionItems", {
         }),
     planId: text("planId").notNull(),
     priceId: text("priceId"),
+    featureId: text("featureId"),
     meterId: text("meterId"),
     unitAmount: real("unitAmount"),
     tiers: text("tiers"),
@@ -126,6 +130,7 @@ export const limits = sqliteTable("limits", {
         })
         .notNull(),
     value: real("value"),
+    override: integer("override", { mode: "boolean" }).default(false),
     description: text("description")
 });
 
@@ -311,6 +316,15 @@ export const approvals = sqliteTable("approvals", {
     type: text("type")
         .$type<"user_device" /*| 'proxy' // for later */>()
         .notNull()
+});
+
+
+export const bannedEmails = sqliteTable("bannedEmails", {
+    email: text("email").primaryKey()
+});
+
+export const bannedIps = sqliteTable("bannedIps", {
+    ip: text("ip").primaryKey()
 });
 
 export type Approval = InferSelectModel<typeof approvals>;

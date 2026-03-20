@@ -19,6 +19,7 @@ export enum ActionsEnum {
     getSite = "getSite",
     listSites = "listSites",
     updateSite = "updateSite",
+    resetSiteBandwidth = "resetSiteBandwidth",
     reGenerateSecret = "reGenerateSecret",
     createResource = "createResource",
     deleteResource = "deleteResource",
@@ -131,7 +132,8 @@ export enum ActionsEnum {
     viewLogs = "viewLogs",
     exportLogs = "exportLogs",
     listApprovals = "listApprovals",
-    updateApprovals = "updateApprovals"
+    updateApprovals = "updateApprovals",
+    signSshKey = "signSshKey"
 }
 
 export async function checkUserActionPermission(
