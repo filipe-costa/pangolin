@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { db, loginPage } from "@server/db";
+import { db, domainNamespaces, loginPage } from "@server/db";
 import {
     domains,
     Org,
@@ -16,18 +16,22 @@ import createHttpError from "http-errors";
 import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import config from "@server/lib/config";
-import { tlsNameSchema } from "@server/lib/schemas";
-import { subdomainSchema } from "@server/lib/schemas";
+import {
+    tlsNameSchema,
+    subdomainSchema,
+    wildcardSubdomainSchema
+} from "@server/lib/schemas";
 import { registry } from "@server/openApi";
 import { OpenAPITags } from "@server/openApi";
 import { createCertificate } from "#dynamic/routers/certificates/createCertificate";
-import { validateAndConstructDomain } from "@server/lib/domainUtils";
+import { validateAndConstructDomain, checkWildcardDomainConflict } from "@server/lib/domainUtils";
 import { build } from "@server/build";
 import { isLicensedOrSubscribed } from "#dynamic/lib/isLicencedOrSubscribed";
 import { tierMatrix } from "@server/lib/billing/tierMatrix";
+import { isSubscribed } from "#dynamic/lib/isSubscribed";
 
 const updateResourceParamsSchema = z.strictObject({
-    resourceId: z.string().transform(Number).pipe(z.int().positive())
+    resourceId: z.coerce.number().int().positive()
 });
 
 const updateHttpResourceBodySchema = z
@@ -42,7 +46,7 @@ const updateHttpResourceBodySchema = z
                 "niceId can only contain letters, numbers, and dashes"
             )
             .optional(),
-        subdomain: subdomainSchema.nullable().optional(),
+        subdomain: z.string().nullable().optional(),
         ssl: z.boolean().optional(),
         sso: z.boolean().optional(),
         blockAccess: z.boolean().optional(),
@@ -72,7 +76,10 @@ const updateHttpResourceBodySchema = z
     .refine(
         (data) => {
             if (data.subdomain) {
-                return subdomainSchema.safeParse(data.subdomain).success;
+                return (
+                    subdomainSchema.safeParse(data.subdomain).success ||
+                    wildcardSubdomainSchema.safeParse(data.subdomain).success
+                );
             }
             return true;
         },
@@ -120,7 +127,9 @@ const updateHttpResourceBodySchema = z
             if (data.headers) {
                 // HTTP header values must be visible ASCII or horizontal whitespace, no control chars (RFC 7230)
                 const validHeaderValue = /^[\t\x20-\x7E]*$/;
-                return data.headers.every((h) => validHeaderValue.test(h.value));
+                return data.headers.every((h) =>
+                    validHeaderValue.test(h.value)
+                );
             }
             return true;
         },
@@ -192,7 +201,22 @@ registry.registerPath({
             }
         }
     },
-    responses: {}
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.unknown().nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
 });
 
 export async function updateResource(
@@ -315,8 +339,52 @@ async function updateHttpResource(
         }
     }
 
+    // Wildcard subdomains are a paid feature
+    if (updateData.subdomain && updateData.subdomain.includes("*")) {
+        const isLicensed = await isLicensedOrSubscribed(
+            resource.orgId,
+            tierMatrix.wildcardSubdomain
+        );
+        if (!isLicensed) {
+            return next(
+                createHttpError(
+                    HttpCode.FORBIDDEN,
+                    "Wildcard subdomains are not supported on your current plan. Please upgrade to access this feature."
+                )
+            );
+        }
+    }
+
     if (updateData.domainId) {
         const domainId = updateData.domainId;
+
+        if (
+            build == "saas" &&
+            !isSubscribed(resource.orgId, tierMatrix.domainNamespaces)
+        ) {
+            // grandfather in existing users
+            const lastAllowedDate = new Date("2026-04-13");
+            const userCreatedDate = new Date(
+                req.user?.dateCreated || new Date()
+            );
+            if (userCreatedDate > lastAllowedDate) {
+                // check if this domain id is a namespace domain and if so, reject
+                const domain = await db
+                    .select()
+                    .from(domainNamespaces)
+                    .where(eq(domainNamespaces.domainId, domainId))
+                    .limit(1);
+
+                if (domain.length > 0) {
+                    return next(
+                        createHttpError(
+                            HttpCode.BAD_REQUEST,
+                            "Your current subscription does not support custom domain namespaces. Please upgrade to access this feature."
+                        )
+                    );
+                }
+            }
+        }
 
         // Validate domain and construct full domain
         const domainResult = await validateAndConstructDomain(
@@ -331,7 +399,11 @@ async function updateHttpResource(
             );
         }
 
-        const { fullDomain, subdomain: finalSubdomain } = domainResult;
+        const {
+            fullDomain,
+            subdomain: finalSubdomain,
+            wildcard
+        } = domainResult;
 
         logger.debug(`Full domain: ${fullDomain}`);
 
@@ -353,6 +425,16 @@ async function updateHttpResource(
                 );
             }
 
+            const wildcardConflict = await checkWildcardDomainConflict(
+                fullDomain,
+                resource.resourceId
+            );
+            if (wildcardConflict.conflict) {
+                return next(
+                    createHttpError(HttpCode.CONFLICT, wildcardConflict.message)
+                );
+            }
+
             // Prevent updating resource with same domain as dashboard
             const dashboardUrl = config.getRawConfig().app.dashboard_url;
             if (dashboardUrl) {
@@ -366,7 +448,7 @@ async function updateHttpResource(
                     );
                 }
             }
-        
+
             if (build != "oss") {
                 const existingLoginPages = await db
                     .select()
@@ -388,7 +470,7 @@ async function updateHttpResource(
         if (fullDomain && fullDomain !== resource.fullDomain) {
             await db
                 .update(resources)
-                .set({ fullDomain })
+                .set({ fullDomain, wildcard })
                 .where(eq(resources.resourceId, resource.resourceId));
         }
 

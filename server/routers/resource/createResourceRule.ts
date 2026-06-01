@@ -14,17 +14,18 @@ import {
     isValidUrlGlobPattern
 } from "@server/lib/validators";
 import { OpenAPITags, registry } from "@server/openApi";
+import { isValidRegionId } from "@server/db/regions";
 
 const createResourceRuleSchema = z.strictObject({
     action: z.enum(["ACCEPT", "DROP", "PASS"]),
-    match: z.enum(["CIDR", "IP", "PATH", "COUNTRY", "ASN"]),
+    match: z.enum(["CIDR", "IP", "PATH", "COUNTRY", "ASN", "REGION"]),
     value: z.string().min(1),
     priority: z.int(),
     enabled: z.boolean().optional()
 });
 
 const createResourceRuleParamsSchema = z.strictObject({
-    resourceId: z.string().transform(Number).pipe(z.int().positive())
+    resourceId: z.coerce.number().int().positive()
 });
 
 registry.registerPath({
@@ -42,7 +43,22 @@ registry.registerPath({
             }
         }
     },
-    responses: {}
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.unknown().nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
 });
 
 export async function createResourceRule(
@@ -123,6 +139,15 @@ export async function createResourceRule(
                     createHttpError(
                         HttpCode.BAD_REQUEST,
                         "Invalid URL glob pattern provided"
+                    )
+                );
+            }
+        } else if (match === "REGION") {
+            if (!isValidRegionId(value)) {
+                return next(
+                    createHttpError(
+                        HttpCode.BAD_REQUEST,
+                        "Invalid region ID provided"
                     )
                 );
             }

@@ -20,12 +20,15 @@ import { z } from "zod";
 import { fromError } from "zod-validation-error";
 import {
     createOlmSession,
-    validateOlmSessionToken
+    validateOlmSessionToken,
+    EXPIRES
 } from "@server/auth/sessions/olm";
+import { getOrCreateCachedToken } from "#dynamic/lib/tokenCache";
 import { verifyPassword } from "@server/auth/password";
 import logger from "@server/logger";
 import config from "@server/lib/config";
 import { APP_VERSION } from "@server/lib/consts";
+import { build } from "@server/build";
 
 export const olmGetTokenBodySchema = z.object({
     olmId: z.string(),
@@ -132,8 +135,19 @@ export async function getOlmToken(
 
         logger.debug("Creating new olm session token");
 
-        const resToken = generateSessionToken();
-        await createOlmSession(resToken, existingOlm.olmId);
+        // Return a cached token if one exists to prevent thundering herd on
+        // simultaneous restarts; falls back to creating a fresh session when
+        // Redis is unavailable or the cache has expired.
+        const resToken = await getOrCreateCachedToken(
+            `olm:token_cache:${existingOlm.olmId}`,
+            config.getRawConfig().server.secret!,
+            Math.floor(EXPIRES / 1000),
+            async () => {
+                const token = generateSessionToken();
+                await createOlmSession(token, existingOlm.olmId);
+                return token;
+            }
+        );
 
         let clientIdToUse;
         if (orgId) {
@@ -206,6 +220,22 @@ export async function getOlmToken(
                 eq(sites.siteId, clientSitesAssociationsCache.siteId)
             )
             .where(eq(clientSitesAssociationsCache.clientId, clientIdToUse!));
+
+        if (clientSites.length > 250 && build == "saas") {
+            // set all of the cache rows isJitMode to true
+            await db
+                .update(clientSitesAssociationsCache)
+                .set({ isJitMode: true })
+                .where(
+                    and(
+                        eq(
+                            clientSitesAssociationsCache.clientId,
+                            clientIdToUse!
+                        ),
+                        eq(clientSitesAssociationsCache.isJitMode, false)
+                    )
+                );
+        }
 
         // Extract unique exit node IDs
         const exitNodeIds = Array.from(

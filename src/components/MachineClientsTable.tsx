@@ -285,15 +285,15 @@ export default function MachineClientsTable({
                     const originalRow = row.original;
                     if (originalRow.online) {
                         return (
-                            <span className="text-green-500 flex items-center space-x-2">
+                            <span className="flex items-center space-x-2">
                                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                                 <span>{t("connected")}</span>
                             </span>
                         );
                     } else {
                         return (
-                            <span className="text-neutral-500 flex items-center space-x-2">
-                                <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                            <span className="flex items-center space-x-2">
+                                <div className="w-2 h-2 bg-neutral-500 rounded-full"></div>
                                 <span>{t("disconnected")}</span>
                             </span>
                         );
@@ -540,7 +540,7 @@ export default function MachineClientsTable({
                 columns={columns}
                 rows={machineClients}
                 tableId="machine-clients"
-                searchPlaceholder={t("resourcesSearch")}
+                searchPlaceholder={t("machinesSearch")}
                 onAdd={() =>
                     startNavigation(() =>
                         router.push(`/${orgId}/settings/clients/machine/create`)

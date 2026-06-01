@@ -12,14 +12,15 @@ import { OpenAPITags, registry } from "@server/openApi";
 import { isValidCIDR } from "@server/lib/validators";
 
 const updateSiteParamsSchema = z.strictObject({
-    siteId: z.string().transform(Number).pipe(z.int().positive())
+    siteId: z.coerce.number().int().positive()
 });
 
 const updateSiteBodySchema = z
     .strictObject({
         name: z.string().min(1).max(255).optional(),
         niceId: z.string().min(1).max(255).optional(),
-        dockerSocketEnabled: z.boolean().optional()
+        dockerSocketEnabled: z.boolean().optional(),
+        status: z.enum(["pending", "approved"]).optional(),
         // remoteSubnets: z.string().optional()
         // subdomain: z
         //     .string()
@@ -52,7 +53,22 @@ registry.registerPath({
             }
         }
     },
-    responses: {}
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.unknown().nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
 });
 
 export async function updateSite(

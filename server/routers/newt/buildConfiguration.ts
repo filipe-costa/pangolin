@@ -4,8 +4,10 @@ import {
     clientSitesAssociationsCache,
     db,
     ExitNode,
+    networks,
     resources,
     Site,
+    siteNetworks,
     siteResources,
     targetHealthCheck,
     targets
@@ -14,7 +16,11 @@ import logger from "@server/logger";
 import { initPeerAddHandshake, updatePeer } from "../olm/peers";
 import { eq, and } from "drizzle-orm";
 import config from "@server/lib/config";
-import { generateSubnetProxyTargets, SubnetProxyTarget } from "@server/lib/ip";
+import {
+    formatEndpoint,
+    generateSubnetProxyTargetV2,
+    SubnetProxyTargetV2
+} from "@server/lib/ip";
 
 export async function buildClientConfigurationForNewtClient(
     site: Site,
@@ -80,7 +86,8 @@ export async function buildClientConfigurationForNewtClient(
                     //         )
                     //     );
 
-                    if (!client.clientSitesAssociationsCache.isJitMode) { // if we are adding sites through jit then dont add the site to the olm
+                    if (!client.clientSitesAssociationsCache.isJitMode) {
+                        // if we are adding sites through jit then dont add the site to the olm
                         // update the peer info on the olm
                         // if the peer has not been added yet this will be a no-op
                         await updatePeer(client.clients.clientId, {
@@ -133,13 +140,16 @@ export async function buildClientConfigurationForNewtClient(
     // Filter out any null values from peers that didn't have an olm
     const validPeers = peers.filter((peer) => peer !== null);
 
-    // Get all enabled site resources for this site
+    // Get all enabled site resources for this site by joining through siteNetworks and networks
     const allSiteResources = await db
         .select()
         .from(siteResources)
-        .where(eq(siteResources.siteId, siteId));
+        .innerJoin(networks, eq(siteResources.networkId, networks.networkId))
+        .innerJoin(siteNetworks, eq(networks.networkId, siteNetworks.networkId))
+        .where(eq(siteNetworks.siteId, siteId))
+        .then((rows) => rows.map((r) => r.siteResources));
 
-    const targetsToSend: SubnetProxyTarget[] = [];
+    const targetsToSend: SubnetProxyTargetV2[] = [];
 
     for (const resource of allSiteResources) {
         // Get clients associated with this specific resource
@@ -164,12 +174,14 @@ export async function buildClientConfigurationForNewtClient(
                 )
             );
 
-        const resourceTargets = generateSubnetProxyTargets(
+        const resourceTargets = await generateSubnetProxyTargetV2(
             resource,
             resourceClients
         );
 
-        targetsToSend.push(...resourceTargets);
+        if (resourceTargets) {
+            targetsToSend.push(...resourceTargets);
+        }
     }
 
     return {
@@ -178,7 +190,10 @@ export async function buildClientConfigurationForNewtClient(
     };
 }
 
-export async function buildTargetConfigurationForNewtClient(siteId: number) {
+export async function buildTargetConfigurationForNewtClient(
+    siteId: number,
+    version?: string | null
+) {
     // Get all enabled targets with their resource protocol information
     const allTargets = await db
         .select({
@@ -189,7 +204,15 @@ export async function buildTargetConfigurationForNewtClient(siteId: number) {
             port: targets.port,
             internalPort: targets.internalPort,
             enabled: targets.enabled,
-            protocol: resources.protocol,
+            protocol: resources.protocol
+        })
+        .from(targets)
+        .innerJoin(resources, eq(targets.resourceId, resources.resourceId))
+        .where(and(eq(targets.siteId, siteId), eq(targets.enabled, true)));
+
+    const allHealthChecks = await db
+        .select({
+            targetHealthCheckId: targetHealthCheck.targetHealthCheckId,
             hcEnabled: targetHealthCheck.hcEnabled,
             hcPath: targetHealthCheck.hcPath,
             hcScheme: targetHealthCheck.hcScheme,
@@ -200,17 +223,15 @@ export async function buildTargetConfigurationForNewtClient(siteId: number) {
             hcUnhealthyInterval: targetHealthCheck.hcUnhealthyInterval,
             hcTimeout: targetHealthCheck.hcTimeout,
             hcHeaders: targetHealthCheck.hcHeaders,
+            hcFollowRedirects: targetHealthCheck.hcFollowRedirects,
             hcMethod: targetHealthCheck.hcMethod,
             hcTlsServerName: targetHealthCheck.hcTlsServerName,
-            hcStatus: targetHealthCheck.hcStatus
+            hcStatus: targetHealthCheck.hcStatus,
+            hcHealthyThreshold: targetHealthCheck.hcHealthyThreshold,
+            hcUnhealthyThreshold: targetHealthCheck.hcUnhealthyThreshold
         })
-        .from(targets)
-        .innerJoin(resources, eq(targets.resourceId, resources.resourceId))
-        .leftJoin(
-            targetHealthCheck,
-            eq(targets.targetId, targetHealthCheck.targetId)
-        )
-        .where(and(eq(targets.siteId, siteId), eq(targets.enabled, true)));
+        .from(targetHealthCheck)
+        .where(eq(targetHealthCheck.siteId, siteId));
 
     const { tcpTargets, udpTargets } = allTargets.reduce(
         (acc, target) => {
@@ -219,8 +240,8 @@ export async function buildTargetConfigurationForNewtClient(siteId: number) {
                 return acc;
             }
 
-            // Format target into string
-            const formattedTarget = `${target.internalPort}:${target.ip}:${target.port}`;
+            // Format target into string (handles IPv6 bracketing)
+            const formattedTarget = `${target.internalPort}:${formatEndpoint(target.ip, target.port)}`;
 
             // Add to the appropriate protocol array
             if (target.protocol === "tcp") {
@@ -234,19 +255,14 @@ export async function buildTargetConfigurationForNewtClient(siteId: number) {
         { tcpTargets: [] as string[], udpTargets: [] as string[] }
     );
 
-    const healthCheckTargets = allTargets.map((target) => {
+    const healthCheckTargets = allHealthChecks.map((target) => {
         // make sure the stuff is defined
-        if (
-            !target.hcPath ||
-            !target.hcHostname ||
-            !target.hcPort ||
-            !target.hcInterval ||
-            !target.hcMethod
-        ) {
-            // logger.debug(
-            //     `Skipping adding target health check ${target.targetId} due to missing health check fields`
-            // );
-            return null; // Skip targets with missing health check fields
+        const isTCP = target.hcMode?.toLowerCase() === "tcp";
+        if (!target.hcHostname || !target.hcPort || !target.hcInterval) {
+            return null;
+        }
+        if (!isTCP && (!target.hcPath || !target.hcMethod)) {
+            return null;
         }
 
         // parse headers
@@ -263,7 +279,7 @@ export async function buildTargetConfigurationForNewtClient(siteId: number) {
         }
 
         return {
-            id: target.targetId,
+            id: target.targetHealthCheckId,
             hcEnabled: target.hcEnabled,
             hcPath: target.hcPath,
             hcScheme: target.hcScheme,
@@ -274,9 +290,12 @@ export async function buildTargetConfigurationForNewtClient(siteId: number) {
             hcUnhealthyInterval: target.hcUnhealthyInterval, // in seconds
             hcTimeout: target.hcTimeout, // in seconds
             hcHeaders: hcHeadersSend,
+            hcFollowRedirects: target.hcFollowRedirects,
             hcMethod: target.hcMethod,
             hcTlsServerName: target.hcTlsServerName,
-            hcStatus: target.hcStatus
+            hcStatus: target.hcStatus,
+            hcHealthyThreshold: target.hcHealthyThreshold,
+            hcUnhealthyThreshold: target.hcUnhealthyThreshold
         };
     });
 

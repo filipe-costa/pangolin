@@ -1,7 +1,7 @@
 /*
  * This file is part of a proprietary work.
  *
- * Copyright (c) 2025 Fossorial, Inc.
+ * Copyright (c) 2025-2026 Fossorial, Inc.
  * All rights reserved.
  *
  * This file is licensed under the Fossorial Commercial License.
@@ -19,11 +19,13 @@ import {
     logsDb,
     newts,
     roles,
+    roleSiteResources,
     roundTripMessageTracker,
     siteResources,
-    sites,
+    siteNetworks,
     userOrgs
 } from "@server/db";
+import { logAccessAudit } from "#private/lib/logAccessAudit";
 import { isLicensedOrSubscribed } from "#private/lib/isLicencedOrSubscribed";
 import { tierMatrix } from "@server/lib/billing/tierMatrix";
 import response from "@server/lib/response";
@@ -31,7 +33,7 @@ import HttpCode from "@server/types/HttpCode";
 import createHttpError from "http-errors";
 import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
-import { eq, or, and } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { canUserAccessSiteResource } from "@server/auth/canUserAccessSiteResource";
 import { signPublicKey, getOrgCAKeys } from "@server/lib/sshCA";
 import config from "@server/lib/config";
@@ -62,10 +64,12 @@ const bodySchema = z
 
 export type SignSshKeyResponse = {
     certificate: string;
+    messageIds: number[];
     messageId: number;
     sshUsername: string;
     sshHost: string;
     resourceId: number;
+    siteIds: number[];
     siteId: number;
     keyId: string;
     validPrincipals: string[];
@@ -89,7 +93,22 @@ export type SignSshKeyResponse = {
 //             }
 //         }
 //     },
-//     responses: {}
+// responses: {
+// 200: {
+// description: "Successful response",
+// content: {
+// "application/json": {
+// schema: z.object({
+// data: z.unknown().nullable(),
+// success: z.boolean(),
+// error: z.boolean(),
+// message: z.string(),
+// status: z.number()
+// })
+// }
+// }
+// }
+// }
 // });
 
 export async function signSshKey(
@@ -125,11 +144,20 @@ export async function signSshKey(
             resource: resourceQueryString
         } = parsedBody.data;
         const userId = req.user?.userId;
-        const roleId = req.userOrgRoleId!;
+        const roleIds = req.userOrgRoleIds ?? [];
 
         if (!userId) {
             return next(
                 createHttpError(HttpCode.UNAUTHORIZED, "User not authenticated")
+            );
+        }
+
+        if (roleIds.length === 0) {
+            return next(
+                createHttpError(
+                    HttpCode.FORBIDDEN,
+                    "User has no role in organization"
+                )
             );
         }
 
@@ -250,10 +278,7 @@ export async function signSshKey(
                 .update(userOrgs)
                 .set({ pamUsername: usernameToUse })
                 .where(
-                    and(
-                        eq(userOrgs.orgId, orgId),
-                        eq(userOrgs.userId, userId)
-                    )
+                    and(eq(userOrgs.orgId, orgId), eq(userOrgs.userId, userId))
                 );
         } else {
             usernameToUse = userOrg.pamUsername;
@@ -339,7 +364,7 @@ export async function signSshKey(
         const hasAccess = await canUserAccessSiteResource({
             userId: userId,
             resourceId: resource.siteResourceId,
-            roleId: roleId
+            roleIds
         });
 
         if (!hasAccess) {
@@ -351,44 +376,67 @@ export async function signSshKey(
             );
         }
 
-        const [roleRow] = await db
-            .select()
+        const roleRows = await db
+            .select({
+                sshSudoCommands: roles.sshSudoCommands,
+                sshUnixGroups: roles.sshUnixGroups,
+                sshCreateHomeDir: roles.sshCreateHomeDir,
+                sshSudoMode: roles.sshSudoMode
+            })
             .from(roles)
-            .where(eq(roles.roleId, roleId))
-            .limit(1);
-
-        let parsedSudoCommands: string[] = [];
-        let parsedGroups: string[] = [];
-        try {
-            parsedSudoCommands = JSON.parse(roleRow?.sshSudoCommands ?? "[]");
-            if (!Array.isArray(parsedSudoCommands)) parsedSudoCommands = [];
-        } catch {
-            parsedSudoCommands = [];
-        }
-        try {
-            parsedGroups = JSON.parse(roleRow?.sshUnixGroups ?? "[]");
-            if (!Array.isArray(parsedGroups)) parsedGroups = [];
-        } catch {
-            parsedGroups = [];
-        }
-        const homedir = roleRow?.sshCreateHomeDir ?? null;
-        const sudoMode = roleRow?.sshSudoMode ?? "none";
-
-        // get the site
-        const [newt] = await db
-            .select()
-            .from(newts)
-            .where(eq(newts.siteId, resource.siteId))
-            .limit(1);
-
-        if (!newt) {
-            return next(
-                createHttpError(
-                    HttpCode.INTERNAL_SERVER_ERROR,
-                    "Site associated with resource not found"
+            .innerJoin(
+                roleSiteResources,
+                eq(roleSiteResources.roleId, roles.roleId)
+            )
+            .where(
+                and(
+                    inArray(roles.roleId, roleIds),
+                    eq(
+                        roleSiteResources.siteResourceId,
+                        resource.siteResourceId
+                    )
                 )
             );
+
+        const parsedSudoCommands: string[] = [];
+        const parsedGroupsSet = new Set<string>();
+        let homedir: boolean | null = null;
+        const sudoModeOrder = { none: 0, commands: 1, full: 2 };
+        let sudoMode: "none" | "commands" | "full" = "none";
+        for (const roleRow of roleRows) {
+            try {
+                const cmds = JSON.parse(roleRow?.sshSudoCommands ?? "[]");
+                if (Array.isArray(cmds)) parsedSudoCommands.push(...cmds);
+            } catch {
+                // skip
+            }
+            try {
+                const grps = JSON.parse(roleRow?.sshUnixGroups ?? "[]");
+                if (Array.isArray(grps))
+                    grps.forEach((g: string) => parsedGroupsSet.add(g));
+            } catch {
+                // skip
+            }
+            if (roleRow?.sshCreateHomeDir === true) homedir = true;
+            const m = roleRow?.sshSudoMode ?? "none";
+            if (
+                sudoModeOrder[m as keyof typeof sudoModeOrder] >
+                sudoModeOrder[sudoMode]
+            ) {
+                sudoMode = m as "none" | "commands" | "full";
+            }
         }
+        const parsedGroups = Array.from(parsedGroupsSet);
+        if (homedir === null && roleRows.length > 0) {
+            homedir = roleRows[0].sshCreateHomeDir ?? null;
+        }
+
+        const sites = await db
+            .select({ siteId: siteNetworks.siteId })
+            .from(siteNetworks)
+            .where(eq(siteNetworks.networkId, resource.networkId!));
+
+        const siteIds = sites.map((site) => site.siteId);
 
         // Sign the public key
         const now = BigInt(Math.floor(Date.now() / 1000));
@@ -402,43 +450,64 @@ export async function signSshKey(
             validBefore: now + validFor
         });
 
-        const [message] = await db
-            .insert(roundTripMessageTracker)
-            .values({
-                wsClientId: newt.newtId,
-                messageType: `newt/pam/connection`,
-                sentAt: Math.floor(Date.now() / 1000)
-            })
-            .returning();
+        const messageIds: number[] = [];
+        for (const siteId of siteIds) {
+            // get the site
+            const [newt] = await db
+                .select()
+                .from(newts)
+                .where(eq(newts.siteId, siteId))
+                .limit(1);
 
-        if (!message) {
-            return next(
-                createHttpError(
-                    HttpCode.INTERNAL_SERVER_ERROR,
-                    "Failed to create message tracker entry"
-                )
-            );
-        }
-
-        await sendToClient(newt.newtId, {
-            type: `newt/pam/connection`,
-            data: {
-                messageId: message.messageId,
-                orgId: orgId,
-                agentPort: resource.authDaemonPort ?? 22123,
-                externalAuthDaemon: resource.authDaemonMode === "remote",
-                agentHost: resource.destination,
-                caCert: caKeys.publicKeyOpenSSH,
-                username: usernameToUse,
-                niceId: resource.niceId,
-                metadata: {
-                    sudoMode: sudoMode,
-                    sudoCommands: parsedSudoCommands,
-                    homedir: homedir,
-                    groups: parsedGroups
-                }
+            if (!newt) {
+                return next(
+                    createHttpError(
+                        HttpCode.INTERNAL_SERVER_ERROR,
+                        "Site associated with resource not found"
+                    )
+                );
             }
-        });
+
+            const [message] = await db
+                .insert(roundTripMessageTracker)
+                .values({
+                    wsClientId: newt.newtId,
+                    messageType: `newt/pam/connection`,
+                    sentAt: Math.floor(Date.now() / 1000)
+                })
+                .returning();
+
+            if (!message) {
+                return next(
+                    createHttpError(
+                        HttpCode.INTERNAL_SERVER_ERROR,
+                        "Failed to create message tracker entry"
+                    )
+                );
+            }
+
+            messageIds.push(message.messageId);
+
+            await sendToClient(newt.newtId, {
+                type: `newt/pam/connection`,
+                data: {
+                    messageId: message.messageId,
+                    orgId: orgId,
+                    agentPort: resource.authDaemonPort ?? 22123,
+                    externalAuthDaemon: resource.authDaemonMode === "remote",
+                    agentHost: resource.destination,
+                    caCert: caKeys.publicKeyOpenSSH,
+                    username: usernameToUse,
+                    niceId: resource.niceId,
+                    metadata: {
+                        sudoMode: sudoMode,
+                        sudoCommands: parsedSudoCommands,
+                        homedir: homedir,
+                        groups: parsedGroups
+                    }
+                }
+            });
+        }
 
         const expiresIn = Number(validFor); // seconds
 
@@ -459,18 +528,38 @@ export async function signSshKey(
             metadata: JSON.stringify({
                 resourceId: resource.siteResourceId,
                 resource: resource.name,
-                siteId: resource.siteId,
+                siteIds: siteIds
             })
+        });
+
+        await logAccessAudit({
+            action: true,
+            type: "ssh",
+            orgId: orgId,
+            siteResourceId: resource.siteResourceId,
+            user: req.user
+                ? { username: req.user.username ?? "", userId: req.user.userId }
+                : undefined,
+            metadata: {
+                resourceName: resource.name,
+                siteId: siteIds[0],
+                sshUsername: usernameToUse,
+                sshHost: sshHost
+            },
+            userAgent: req.headers["user-agent"],
+            requestIp: req.ip
         });
 
         return response<SignSshKeyResponse>(res, {
             data: {
                 certificate: cert.certificate,
-                messageId: message.messageId,
+                messageIds: messageIds,
+                messageId: messageIds[0], // just pick the first one for backward compatibility
                 sshUsername: usernameToUse,
                 sshHost: sshHost,
                 resourceId: resource.siteResourceId,
-                siteId: resource.siteId,
+                siteIds: siteIds,
+                siteId: siteIds[0], // just pick the first one for backward compatibility
                 keyId: cert.keyId,
                 validPrincipals: cert.validPrincipals,
                 validAfter: cert.validAfter.toISOString(),

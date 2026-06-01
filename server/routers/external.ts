@@ -102,6 +102,8 @@ authenticated.put(
     logActionAudit(ActionsEnum.createSite),
     site.createSite
 );
+
+
 authenticated.get(
     "/org/:orgId/sites",
     verifyOrgAccess,
@@ -283,6 +285,13 @@ authenticated.get(
     site.listContainers
 );
 
+authenticated.get(
+    "/site/:siteId/status-history",
+    verifySiteAccess,
+    verifyUserHasAction(ActionsEnum.getSite),
+    site.getSiteStatusHistory
+);
+
 // Site Resource endpoints
 authenticated.put(
     "/org/:orgId/site-resource",
@@ -419,6 +428,13 @@ authenticated.get(
 );
 
 authenticated.get(
+    "/resource/:resourceId/status-history",
+    verifyResourceAccess,
+    verifyUserHasAction(ActionsEnum.getResource),
+    resource.getResourceStatusHistory
+);
+
+authenticated.get(
     "/org/:orgId/resources",
     verifyOrgAccess,
     verifyUserHasAction(ActionsEnum.listResources),
@@ -436,6 +452,12 @@ authenticated.get(
     "/org/:orgId/user-resources",
     verifyOrgAccess,
     resource.getUserResources
+);
+
+authenticated.get(
+    "/org/:orgId/user-resource-aliases",
+    verifyOrgAccess,
+    resource.listUserResourceAliases
 );
 
 authenticated.get(
@@ -644,6 +666,7 @@ authenticated.delete(
     logActionAudit(ActionsEnum.deleteRole),
     role.deleteRole
 );
+
 authenticated.post(
     "/role/:roleId/add/:userId",
     verifyRoleAccess,
@@ -651,7 +674,7 @@ authenticated.post(
     verifyLimits,
     verifyUserHasAction(ActionsEnum.addUserRole),
     logActionAudit(ActionsEnum.addUserRole),
-    user.addUserRole
+    user.addUserRoleLegacy
 );
 
 authenticated.post(
@@ -793,6 +816,11 @@ unauthenticated.get(
 // );
 
 unauthenticated.get("/user", verifySessionMiddleware, user.getUser);
+unauthenticated.post(
+    "/user/locale",
+    verifySessionMiddleware,
+    user.updateUserLocale
+);
 unauthenticated.get("/my-device", verifySessionMiddleware, user.myDevice);
 
 authenticated.get("/users", verifyUserIsServerAdmin, user.adminListUsers);
@@ -1128,7 +1156,7 @@ export const authRouter = Router();
 unauthenticated.use("/auth", authRouter);
 authRouter.use(
     rateLimit({
-        windowMs: config.getRawConfig().rate_limits.auth.window_minutes,
+        windowMs: config.getRawConfig().rate_limits.auth.window_minutes * 60 * 1000,
         max: config.getRawConfig().rate_limits.auth.max_requests,
         keyGenerator: (req) =>
             `authRouterGlobal:${ipKeyGenerator(req.ip || "")}:${req.path}`,
@@ -1202,13 +1230,29 @@ authRouter.post(
     }),
     newt.getNewtToken
 );
+
+authRouter.post(
+    "/newt/register",
+    rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: 30,
+        keyGenerator: (req) =>
+            `newtRegister:${req.body.provisioningKey?.split(".")[0] || ipKeyGenerator(req.ip || "")}`,
+        handler: (req, res, next) => {
+            const message = `You can only register a newt ${30} times every ${15} minutes. Please try again later.`;
+            return next(createHttpError(HttpCode.TOO_MANY_REQUESTS, message));
+        },
+        store: createStore()
+    }),
+    newt.registerNewt
+);
 authRouter.post(
     "/olm/get-token",
     rateLimit({
         windowMs: 15 * 60 * 1000,
         max: 900,
         keyGenerator: (req) =>
-            `olmGetToken:${req.body.newtId || ipKeyGenerator(req.ip || "")}`,
+            `olmGetToken:${req.body.olmId || ipKeyGenerator(req.ip || "")}`,
         handler: (req, res, next) => {
             const message = `You can only request an Olm token ${900} times every ${15} minutes. Please try again later.`;
             return next(createHttpError(HttpCode.TOO_MANY_REQUESTS, message));
