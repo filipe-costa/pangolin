@@ -45,6 +45,7 @@ import type { ListOrgLabelsResponse } from "@server/routers/labels/types";
 import { ListHealthChecksResponse } from "@server/routers/healthChecks/types";
 import { StatusHistoryResponse } from "@server/lib/statusHistory";
 import type { ListResourcePoliciesResponse } from "@server/routers/resource/types";
+import type { GetResourcePolicyResponse } from "@server/routers/policy";
 
 export type ProductUpdate = {
     link: string | null;
@@ -59,6 +60,34 @@ export type ProductUpdate = {
 
 export type LatestVersionResponse = {
     pangolin: {
+        latestVersion: string;
+        releaseNotes: string;
+    };
+    newt: {
+        latestVersion: string;
+        releaseNotes: string;
+    };
+    cli: {
+        latestVersion: string;
+        releaseNotes: string;
+    };
+    "panglin-node": {
+        latestVersion: string;
+        releaseNotes: string;
+    };
+    windows: {
+        latestVersion: string;
+        releaseNotes: string;
+    };
+    android: {
+        latestVersion: string;
+        releaseNotes: string;
+    };
+    mac: {
+        latestVersion: string;
+        releaseNotes: string;
+    };
+    ios: {
         latestVersion: string;
         releaseNotes: string;
     };
@@ -581,16 +610,16 @@ export const orgQueries = {
             }
         }),
 
-    policies: ({ orgId, name }: { orgId: string; name?: string }) =>
+    policies: ({ orgId, query }: { orgId: string; query?: string }) =>
         queryOptions({
-            queryKey: ["ORG", orgId, "RESOURCES_POLICIES", name] as const,
+            queryKey: ["ORG", orgId, "RESOURCES_POLICIES", query] as const,
             queryFn: async ({ signal, meta }) => {
                 const sp = new URLSearchParams({
                     pageSize: "10"
                 });
 
-                if (name) {
-                    sp.set("query", name);
+                if (query) {
+                    sp.set("query", query);
                 }
 
                 const res = await meta!.api.get<
@@ -600,6 +629,18 @@ export const orgQueries = {
                 });
 
                 return res.data.data.policies;
+            }
+        }),
+
+    resourcePolicy: ({ resourcePolicyId }: { resourcePolicyId: number }) =>
+        queryOptions({
+            queryKey: ["RESOURCE_POLICY", resourcePolicyId] as const,
+            queryFn: async ({ signal, meta }) => {
+                const res = await meta!.api.get<
+                    AxiosResponse<GetResourcePolicyResponse>
+                >(`/resource-policy/${resourcePolicyId}`, { signal });
+
+                return res.data.data;
             }
         })
 };

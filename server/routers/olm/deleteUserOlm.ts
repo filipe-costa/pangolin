@@ -34,7 +34,7 @@ const paramsSchema = z
 // content: {
 // "application/json": {
 // schema: z.object({
-// data: z.unknown().nullable(),
+// data: z.record(z.string(), z.any()).nullable(),
 // success: z.boolean(),
 // error: z.boolean(),
 // message: z.string(),
@@ -86,13 +86,11 @@ export async function deleteUserOlm(
         });
 
         if (deletedClient) {
-            rebuildClientAssociationsFromClient(deletedClient, primaryDb).catch(
-                (e) => {
-                    logger.error(
-                        `Failed to rebuild client-site associations after deleting OLM ${olmId}: ${e}`
-                    );
-                }
-            );
+            rebuildClientAssociationsFromClient(deletedClient).catch((e) => {
+                logger.error(
+                    `Failed to rebuild client-site associations after deleting OLM ${olmId}: ${e}`
+                );
+            });
             sendTerminateClient(
                 deletedClient.clientId,
                 OlmErrorCodes.TERMINATED_DELETED,

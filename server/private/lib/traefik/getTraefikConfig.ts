@@ -12,7 +12,6 @@
  */
 
 import {
-    browserGatewayTarget,
     certificates,
     db,
     domainNamespaces,
@@ -85,8 +84,8 @@ export async function getTraefikConfig(
     filterOutNamespaceDomains = false,
     generateLoginPageRouters = false,
     allowRawResources = true,
-    allowMaintenancePage = true,
-    allowBrowserGatewayResources = true
+    maintenancePageUiUrl: string | null = null,
+    browserGatewayUiUrl: string | null = null
 ): Promise<any> {
     // Get resources with their targets and sites in a single optimized query
     // Start from sites on this exit node, then join to targets and resources
@@ -172,8 +171,15 @@ export async function getTraefikConfig(
                 ),
                 inArray(sites.type, siteTypes),
                 allowRawResources
-                    ? inArray(resources.mode, ["http", "udp", "tcp"]) // allow all three
-                    : eq(resources.mode, "http")
+                    ? inArray(resources.mode, [
+                          "http",
+                          "udp",
+                          "tcp",
+                          "vnc",
+                          "ssh",
+                          "rdp"
+                      ]) // allow all three
+                    : inArray(resources.mode, ["http", "vnc", "ssh", "rdp"])
             )
         )
         .orderBy(desc(targets.priority), targets.targetId); // stable ordering
@@ -181,7 +187,10 @@ export async function getTraefikConfig(
     // Group by resource and include targets with their unique site data
     const resourcesMap = new Map();
 
-    resourcesWithTargetsAndSites.forEach((row) => {
+    for (const row of resourcesWithTargetsAndSites) {
+        if (!["http", "tcp", "udp"].includes(row.mode)) {
+            continue;
+        }
         const resourceId = row.resourceId;
         const resourceName = sanitize(row.resourceName) || "";
         const targetPath = encodePath(row.path); // Use encodePath to avoid collisions (e.g. "/a/b" vs "/a-b")
@@ -191,7 +200,7 @@ export async function getTraefikConfig(
         const priority = row.priority ?? 100;
 
         if (filterOutNamespaceDomains && row.domainNamespaceId) {
-            return;
+            continue;
         }
 
         // Create a unique key combining resourceId, path config, and rewrite config
@@ -218,7 +227,7 @@ export async function getTraefikConfig(
                 logger.debug(
                     `Invalid path rewrite configuration for resource ${resourceId}: ${validation.error}`
                 );
-                return;
+                continue;
             }
 
             resourcesMap.set(mapKey, {
@@ -275,7 +284,7 @@ export async function getTraefikConfig(
                 online: row.siteOnline
             }
         });
-    });
+    }
 
     // Group browser gateway targets by resource
     type BrowserGatewayResourceEntry = {
@@ -295,13 +304,12 @@ export async function getTraefikConfig(
         maintenanceMessage: string | null;
         maintenanceEstimatedTime: string | null;
         targets: {
-            browserGatewayTargetId: number;
+            targetId: number;
             bgType: string;
             siteId: number;
             siteType: string;
             siteOnline: boolean | null;
             subnet: string | null;
-            siteExitNodeId: number | null;
         }[];
     };
     const browserGatewayResourcesMap = new Map<
@@ -309,67 +317,11 @@ export async function getTraefikConfig(
         BrowserGatewayResourceEntry
     >();
 
-    if (allowBrowserGatewayResources) {
-        // Query browser gateway targets for this exit node
-        const browserGatewayRows = await db
-            .select({
-                // Resource fields
-                resourceId: resources.resourceId,
-                resourceName: resources.name,
-                fullDomain: resources.fullDomain,
-                ssl: resources.ssl,
-                subdomain: resources.subdomain,
-                domainId: resources.domainId,
-                enabled: resources.enabled,
-                wildcard: resources.wildcard,
-                domainCertResolver: domains.certResolver,
-                preferWildcardCert: domains.preferWildcardCert,
-                domainNamespaceId: domainNamespaces.domainNamespaceId,
-                // Maintenance fields
-                maintenanceModeEnabled: resources.maintenanceModeEnabled,
-                maintenanceModeType: resources.maintenanceModeType,
-                maintenanceTitle: resources.maintenanceTitle,
-                maintenanceMessage: resources.maintenanceMessage,
-                maintenanceEstimatedTime: resources.maintenanceEstimatedTime,
-                // Browser gateway target fields
-                browserGatewayTargetId:
-                    browserGatewayTarget.browserGatewayTargetId,
-                bgType: browserGatewayTarget.type,
-                // Site fields
-                siteId: sites.siteId,
-                siteType: sites.type,
-                siteOnline: sites.online,
-                subnet: sites.subnet,
-                siteExitNodeId: sites.exitNodeId
-            })
-            .from(browserGatewayTarget)
-            .innerJoin(sites, eq(sites.siteId, browserGatewayTarget.siteId))
-            .innerJoin(
-                resources,
-                eq(resources.resourceId, browserGatewayTarget.resourceId)
-            )
-            .leftJoin(domains, eq(domains.domainId, resources.domainId))
-            .leftJoin(
-                domainNamespaces,
-                eq(domainNamespaces.domainId, resources.domainId)
-            )
-            .where(
-                and(
-                    eq(resources.enabled, true),
-                    or(
-                        eq(sites.exitNodeId, exitNodeId),
-                        and(
-                            isNull(sites.exitNodeId),
-                            sql`(${siteTypes.includes("local") ? 1 : 0} = 1)`,
-                            eq(sites.type, "local"),
-                            sql`(${build != "saas" ? 1 : 0} = 1)`
-                        )
-                    ),
-                    inArray(sites.type, siteTypes)
-                )
-            );
-
-        for (const row of browserGatewayRows) {
+    if (browserGatewayUiUrl) {
+        for (const row of resourcesWithTargetsAndSites) {
+            if (!["ssh", "vnc", "rdp"].includes(row.mode)) {
+                continue;
+            }
             if (filterOutNamespaceDomains && row.domainNamespaceId) {
                 continue;
             }
@@ -394,13 +346,12 @@ export async function getTraefikConfig(
                 });
             }
             browserGatewayResourcesMap.get(row.resourceId)!.targets.push({
-                browserGatewayTargetId: row.browserGatewayTargetId,
-                bgType: row.bgType,
+                targetId: row.targetId,
+                bgType: row.mode,
                 siteId: row.siteId,
                 siteType: row.siteType,
                 siteOnline: row.siteOnline,
-                subnet: row.subnet,
-                siteExitNodeId: row.siteExitNodeId
+                subnet: row.subnet
             });
         }
     }
@@ -410,7 +361,11 @@ export async function getTraefikConfig(
         fullDomain: string | null;
         mode: "http" | "host" | "cidr" | "ssh";
     }[] = [];
-    if (build == "enterprise") {
+    if (
+        build == "enterprise" &&
+        !privateConfig.getRawPrivateConfig().flags
+            .disable_private_http_placeholder
+    ) {
         // we dont want to do this on the cloud
         // Query siteResources in HTTP mode with SSL enabled and aliases - cert generation / HTTPS edge
         siteResourcesWithFullDomain = await db
@@ -675,10 +630,11 @@ export async function getTraefikConfig(
                 }
             }
 
-            if (showMaintenancePage && allowMaintenancePage) {
+            if (showMaintenancePage && maintenancePageUiUrl) {
                 const maintenanceServiceName = `${key}-maintenance-service`;
                 const maintenanceRouterName = `${key}-maintenance-router`;
                 const rewriteMiddlewareName = `${key}-maintenance-rewrite`;
+                const maintenanceHeadersMiddlewareName = `${key}-maintenance-headers`;
 
                 const entrypointHttp =
                     config.getRawConfig().traefik.http_entrypoint;
@@ -691,15 +647,11 @@ export async function getTraefikConfig(
                     ? `*.${domainParts.slice(1).join(".")}`
                     : fullDomain;
 
-                const maintenancePort = config.getRawConfig().server.next_port;
-                const maintenanceHost =
-                    config.getRawConfig().server.internal_hostname;
-
                 config_output.http.services[maintenanceServiceName] = {
                     loadBalancer: {
                         servers: [
                             {
-                                url: `http://${maintenanceHost}:${maintenancePort}`
+                                url: maintenancePageUiUrl
                             }
                         ],
                         passHostHeader: true
@@ -718,12 +670,26 @@ export async function getTraefikConfig(
                     }
                 };
 
+                config_output.http.middlewares[
+                    maintenanceHeadersMiddlewareName
+                ] = {
+                    headers: {
+                        customRequestHeaders: {
+                            Host: "app.pangolin.net", // if we are sending to the cloud the host needs to be this but we will pull the p-host to find the resource
+                            "p-host": fullDomain
+                        }
+                    }
+                };
+
                 config_output.http.routers[maintenanceRouterName] = {
                     entryPoints: [
                         resource.ssl ? entrypointHttps : entrypointHttp
                     ],
                     service: maintenanceServiceName,
-                    middlewares: [rewriteMiddlewareName],
+                    middlewares: [
+                        rewriteMiddlewareName,
+                        maintenanceHeadersMiddlewareName
+                    ],
                     rule: rule,
                     priority: 2000,
                     ...(resource.ssl ? { tls } : {})
@@ -736,6 +702,7 @@ export async function getTraefikConfig(
                             resource.ssl ? entrypointHttps : entrypointHttp
                         ],
                         service: maintenanceServiceName,
+                        middlewares: [maintenanceHeadersMiddlewareName],
                         rule: `${rule} && (PathPrefix(\`/_next\`) || PathRegexp(\`^/__nextjs*\`) || Path(\`/favicon.ico\`)) `,
                         priority: 2001,
                         ...(resource.ssl ? { tls } : {})
@@ -1072,7 +1039,7 @@ export async function getTraefikConfig(
         }
     }
 
-    if (allowBrowserGatewayResources) {
+    if (browserGatewayUiUrl) {
         // Generate Traefik config for browser gateway resources
         const browserGatewayPort = 39999;
         for (const [, bgResource] of browserGatewayResourcesMap.entries()) {
@@ -1164,19 +1131,16 @@ export async function getTraefikConfig(
                 }
             }
 
-            if (showBgMaintenancePage && allowMaintenancePage) {
+            if (showBgMaintenancePage && maintenancePageUiUrl) {
                 const bgMaintenanceServiceName = `bg-r${bgResource.resourceId}-maintenance-service`;
                 const bgMaintenanceRouterName = `bg-r${bgResource.resourceId}-maintenance-router`;
                 const bgRewriteMiddlewareName = `bg-r${bgResource.resourceId}-maintenance-rewrite`;
+                const bgMaintenanceHeadersMiddlewareName = `bg-r${bgResource.resourceId}-maintenance-headers`;
 
                 const entrypointHttp =
                     config.getRawConfig().traefik.http_entrypoint;
                 const entrypointHttps =
                     config.getRawConfig().traefik.https_entrypoint;
-
-                const maintenancePort = config.getRawConfig().server.next_port;
-                const maintenanceHost =
-                    config.getRawConfig().server.internal_hostname;
 
                 if (!config_output.http.services)
                     config_output.http.services = {};
@@ -1189,7 +1153,7 @@ export async function getTraefikConfig(
                     loadBalancer: {
                         servers: [
                             {
-                                url: `http://${maintenanceHost}:${maintenancePort}`
+                                url: maintenancePageUiUrl
                             }
                         ],
                         passHostHeader: true
@@ -1203,12 +1167,26 @@ export async function getTraefikConfig(
                     }
                 };
 
+                config_output.http.middlewares![
+                    bgMaintenanceHeadersMiddlewareName
+                ] = {
+                    headers: {
+                        customRequestHeaders: {
+                            Host: "app.pangolin.net", // if we are sending to the cloud the host needs to be this but we will pull the p-host to find the resource
+                            "p-host": fullDomain
+                        }
+                    }
+                };
+
                 config_output.http.routers![bgMaintenanceRouterName] = {
                     entryPoints: [
                         bgResource.ssl ? entrypointHttps : entrypointHttp
                     ],
                     service: bgMaintenanceServiceName,
-                    middlewares: [bgRewriteMiddlewareName],
+                    middlewares: [
+                        bgRewriteMiddlewareName,
+                        bgMaintenanceHeadersMiddlewareName
+                    ],
                     rule: hostRule,
                     priority: 2000,
                     ...(bgResource.ssl ? { tls } : {})
@@ -1221,6 +1199,7 @@ export async function getTraefikConfig(
                         bgResource.ssl ? entrypointHttps : entrypointHttp
                     ],
                     service: bgMaintenanceServiceName,
+                    middlewares: [bgMaintenanceHeadersMiddlewareName],
                     rule: `${hostRule} && (PathPrefix(\`/_next\`) || PathRegexp(\`^/__nextjs*\`) || Path(\`/favicon.ico\`))`,
                     priority: 2001,
                     ...(bgResource.ssl ? { tls } : {})
@@ -1279,9 +1258,8 @@ export async function getTraefikConfig(
             // The primary type is used for the path rewrite (e.g. /rdp), mirroring
             // how the maintenance page rewrites everything to /maintenance-screen.
             const primaryType = typeMap.keys().next().value as string;
-            const internalHost = config.getRawConfig().server.internal_hostname;
-            const internalPort = config.getRawConfig().server.next_port;
             const uiRewriteMiddlewareName = `bg-r${bgResource.resourceId}-ui-rewrite`;
+            const uiHeadersMiddlewareName = `bg-r${bgResource.resourceId}-ui-headers`;
             const entrypoint = bgResource.ssl
                 ? config.getRawConfig().traefik.https_entrypoint
                 : config.getRawConfig().traefik.http_entrypoint;
@@ -1297,22 +1275,33 @@ export async function getTraefikConfig(
                 }
             };
 
+            config_output.http.middlewares![uiHeadersMiddlewareName] = {
+                headers: {
+                    customRequestHeaders: {
+                        Host: "app.pangolin.net", // if we are sending to the cloud the host needs to be this but we will pull the p-host to find the resource
+                        "p-host": fullDomain
+                    }
+                }
+            };
+
             config_output.http.services![bgUiServiceName] = {
                 loadBalancer: {
                     servers: [
                         {
-                            url: `http://${internalHost}:${internalPort}`
+                            url: browserGatewayUiUrl
                         }
                     ]
                 }
             };
 
-            // Assets router at higher priority so /_next files load without rewrite
+            // Assets router at higher priority so /_next files load without rewrite.
+            // Do NOT apply the path-rewrite middleware here — static assets must
+            // keep their original path; only the host headers are needed.
             config_output.http.routers![
                 `bg-r${bgResource.resourceId}-assets-router`
             ] = {
                 entryPoints: [entrypoint],
-                middlewares: routerMiddlewares,
+                middlewares: [...routerMiddlewares, uiHeadersMiddlewareName],
                 service: bgUiServiceName,
                 rule: `${hostRule} && (PathPrefix(\`/_next\`) || PathRegexp(\`^/__nextjs*\`) || Path(\`/favicon.ico\`))`,
                 priority: 101,
@@ -1324,7 +1313,11 @@ export async function getTraefikConfig(
                 `bg-r${bgResource.resourceId}-ui-router`
             ] = {
                 entryPoints: [entrypoint],
-                middlewares: [...routerMiddlewares, uiRewriteMiddlewareName],
+                middlewares: [
+                    ...routerMiddlewares,
+                    uiRewriteMiddlewareName,
+                    uiHeadersMiddlewareName
+                ],
                 service: bgUiServiceName,
                 rule: hostRule,
                 priority: 100,
@@ -1357,10 +1350,6 @@ export async function getTraefikConfig(
             const siteResourceRouterName = `${srKey}-router`;
             const siteResourceRewriteMiddlewareName = `${srKey}-rewrite`;
 
-            const maintenancePort = config.getRawConfig().server.next_port;
-            const maintenanceHost =
-                config.getRawConfig().server.internal_hostname;
-
             if (!config_output.http.routers) {
                 config_output.http.routers = {};
             }
@@ -1376,7 +1365,7 @@ export async function getTraefikConfig(
                 loadBalancer: {
                     servers: [
                         {
-                            url: `http://${maintenanceHost}:${maintenancePort}`
+                            url: maintenancePageUiUrl
                         }
                     ],
                     passHostHeader: true

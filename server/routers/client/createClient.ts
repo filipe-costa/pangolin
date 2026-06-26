@@ -65,7 +65,7 @@ registry.registerPath({
             content: {
                 "application/json": {
                     schema: z.object({
-                        data: z.unknown().nullable(),
+                        data: z.record(z.string(), z.any()).nullable(),
                         success: z.boolean(),
                         error: z.boolean(),
                         message: z.string(),
@@ -280,13 +280,11 @@ export async function createClient(
         });
 
         if (newClient) {
-            rebuildClientAssociationsFromClient(newClient, primaryDb).catch(
-                (e) => {
-                    logger.error(
-                        `Failed to rebuild client associations after creating client: ${e}`
-                    );
-                }
-            );
+            rebuildClientAssociationsFromClient(newClient).catch((e) => {
+                logger.error(
+                    `Failed to rebuild client associations after creating client: ${e}`
+                );
+            });
         }
 
         return response<CreateClientResponse>(res, {

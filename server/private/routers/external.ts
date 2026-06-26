@@ -31,7 +31,6 @@ import * as siteProvisioning from "#private/routers/siteProvisioning";
 import * as eventStreamingDestination from "#private/routers/eventStreamingDestination";
 import * as alertRule from "#private/routers/alertRule";
 import * as healthChecks from "#private/routers/healthChecks";
-import * as browserGatewayTarget from "#private/routers/browserGatewayTarget";
 import * as labels from "#private/routers/labels";
 import * as client from "@server/routers/client";
 import * as resource from "#private/routers/resource";
@@ -613,7 +612,7 @@ authenticated.post(
     verifyValidSubscription(tierMatrix.advancedPrivateResources),
     verifyOrgAccess,
     verifyLimits,
-    verifyUserHasAction(ActionsEnum.signSshKey),
+    // verifyUserHasAction(ActionsEnum.signSshKey), // this check happens inside of the function now
     // logActionAudit(ActionsEnum.signSshKey), // it is handled inside of the function below so we can include more metadata
     ssh.signSshKey
 );
@@ -878,49 +877,4 @@ authenticated.post(
     "/client/:clientId/rebuild-associations-cache",
     verifyClientAccess,
     client.rebuildClientAssociationsCacheRoute
-);
-
-authenticated.put(
-    "/org/:orgId/resource/:resourceId/browser-gateway-target",
-    verifyValidLicense,
-    verifyOrgAccess,
-    verifyLimits,
-    verifyUserHasAction(ActionsEnum.createBrowserGatewayTarget),
-    logActionAudit(ActionsEnum.createBrowserGatewayTarget),
-    browserGatewayTarget.createBrowserGatewayTarget
-);
-
-authenticated.get(
-    "/org/:orgId/resource/:resourceId/browser-gateway-targets",
-    verifyValidLicense,
-    verifyOrgAccess,
-    verifyUserHasAction(ActionsEnum.listBrowserGatewayTargets),
-    browserGatewayTarget.listBrowserGatewayTargets
-);
-
-authenticated.get(
-    "/org/:orgId/browser-gateway-target/:browserGatewayTargetId",
-    verifyValidLicense,
-    verifyOrgAccess,
-    verifyUserHasAction(ActionsEnum.getBrowserGatewayTarget),
-    browserGatewayTarget.getBrowserGatewayTarget
-);
-
-authenticated.post(
-    "/org/:orgId/browser-gateway-target/:browserGatewayTargetId",
-    verifyValidLicense,
-    verifyOrgAccess,
-    verifyLimits,
-    verifyUserHasAction(ActionsEnum.updateBrowserGatewayTarget),
-    logActionAudit(ActionsEnum.updateBrowserGatewayTarget),
-    browserGatewayTarget.updateBrowserGatewayTarget
-);
-
-authenticated.delete(
-    "/org/:orgId/browser-gateway-target/:browserGatewayTargetId",
-    verifyValidLicense,
-    verifyOrgAccess,
-    verifyUserHasAction(ActionsEnum.deleteBrowserGatewayTarget),
-    logActionAudit(ActionsEnum.deleteBrowserGatewayTarget),
-    browserGatewayTarget.deleteBrowserGatewayTarget
 );

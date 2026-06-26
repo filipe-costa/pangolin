@@ -52,7 +52,7 @@ registry.registerPath({
             content: {
                 "application/json": {
                     schema: z.object({
-                        data: z.unknown().nullable(),
+                        data: z.record(z.string(), z.any()).nullable(),
                         success: z.boolean(),
                         error: z.boolean(),
                         message: z.string(),
@@ -235,7 +235,7 @@ export async function batchAddClientToSiteResources(
             }
         });
 
-        rebuildClientAssociationsFromClient(client, primaryDb).catch((e) => {
+        rebuildClientAssociationsFromClient(client).catch((e) => {
             logger.error(
                 `Failed to rebuild client associations after batch adding site resources for client ${clientId}: ${e}`
             );

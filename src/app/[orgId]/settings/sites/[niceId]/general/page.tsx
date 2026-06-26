@@ -21,6 +21,8 @@ import { toast, useToast } from "@app/hooks/useToast";
 import { useRouter } from "next/navigation";
 import {
     SettingsContainer,
+    SettingsFormCell,
+    SettingsFormGrid,
     SettingsSection,
     SettingsSectionHeader,
     SettingsSectionTitle,
@@ -153,48 +155,54 @@ export default function GeneralPage() {
                 </SettingsSectionHeader>
 
                 <SettingsSectionBody>
-                    <SettingsSectionForm>
+                    <SettingsSectionForm variant="half">
                         <Form {...form}>
                             <form
                                 onSubmit={form.handleSubmit(onSubmit)}
                                 className="space-y-6"
                                 id="general-settings-form"
                             >
-                                <FormField
-                                    control={form.control}
-                                    name="name"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>{t("name")}</FormLabel>
-                                            <FormControl>
-                                                <Input {...field} />
-                                            </FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
-
-                                <FormField
-                                    control={form.control}
-                                    name="niceId"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>
-                                                {t("identifier")}
-                                            </FormLabel>
-                                            <FormControl>
-                                                <Input
-                                                    {...field}
-                                                    placeholder={t(
-                                                        "enterIdentifier"
-                                                    )}
-                                                    className="flex-1"
-                                                />
-                                            </FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
+                                <SettingsFormGrid>
+                                    <SettingsFormCell span="half">
+                                        <FormField
+                                            control={form.control}
+                                            name="name"
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel>
+                                                        {t("name")}
+                                                    </FormLabel>
+                                                    <FormControl>
+                                                        <Input {...field} />
+                                                    </FormControl>
+                                                    <FormMessage />
+                                                </FormItem>
+                                            )}
+                                        />
+                                    </SettingsFormCell>
+                                    <SettingsFormCell span="half">
+                                        <FormField
+                                            control={form.control}
+                                            name="niceId"
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel>
+                                                        {t("identifier")}
+                                                    </FormLabel>
+                                                    <FormControl>
+                                                        <Input
+                                                            {...field}
+                                                            placeholder={t(
+                                                                "enterIdentifier"
+                                                            )}
+                                                        />
+                                                    </FormControl>
+                                                    <FormMessage />
+                                                </FormItem>
+                                            )}
+                                        />
+                                    </SettingsFormCell>
+                                </SettingsFormGrid>
 
                                 {site && site.type === "newt" && (
                                     <FormField
@@ -245,76 +253,87 @@ export default function GeneralPage() {
                                 <PaidFeaturesAlert
                                     tiers={tierMatrix.newtAutoUpdate}
                                 />
-                                {site && site.type === "newt" && (
-                                    <FormField
-                                        control={form.control}
-                                        name="autoUpdateEnabled"
-                                        render={({ field }) => {
-                                            const isOverriding = form.watch(
-                                                "autoUpdateOverrideOrg"
-                                            );
-                                            return (
-                                                <FormItem>
-                                                    <FormControl>
-                                                        <div className="flex items-center gap-3">
-                                                            <SwitchInput
-                                                                id="auto-update-enabled"
-                                                                label={t(
-                                                                    "siteAutoUpdateLabel"
-                                                                )}
-                                                                checked={
-                                                                    field.value
-                                                                }
-                                                                onCheckedChange={(
-                                                                    checked
-                                                                ) => {
-                                                                    field.onChange(
+                                {site &&
+                                    site.type === "newt" &&
+                                    !env.flags.disableEnterpriseFeatures && (
+                                        <FormField
+                                            control={form.control}
+                                            name="autoUpdateEnabled"
+                                            render={({ field }) => {
+                                                const isOverriding = form.watch(
+                                                    "autoUpdateOverrideOrg"
+                                                );
+                                                return (
+                                                    <FormItem>
+                                                        <FormControl>
+                                                            <div className="">
+                                                                <SwitchInput
+                                                                    id="auto-update-enabled"
+                                                                    label={t(
+                                                                        "siteAutoUpdateLabel"
+                                                                    )}
+                                                                    checked={
+                                                                        field.value
+                                                                    }
+                                                                    onCheckedChange={(
                                                                         checked
-                                                                    );
-                                                                    form.setValue(
-                                                                        "autoUpdateOverrideOrg",
-                                                                        true
-                                                                    );
-                                                                }}
-                                                                disabled={
-                                                                    !hasAutoUpdateFeature
-                                                                }
-                                                            />
-                                                            {isOverriding && (
-                                                                <ButtonUI
-                                                                    type="button"
-                                                                    variant="link"
-                                                                    size="sm"
-                                                                    className="h-auto p-0 pb-2 text-xs"
-                                                                    onClick={() => {
+                                                                    ) => {
+                                                                        field.onChange(
+                                                                            checked
+                                                                        );
                                                                         form.setValue(
                                                                             "autoUpdateOverrideOrg",
-                                                                            false
-                                                                        );
-                                                                        form.setValue(
-                                                                            "autoUpdateEnabled",
-                                                                            orgAutoUpdate
+                                                                            true
                                                                         );
                                                                     }}
-                                                                >
-                                                                    {t(
-                                                                        "siteAutoUpdateResetToOrg"
-                                                                    )}
-                                                                </ButtonUI>
-                                                            )}
-                                                        </div>
-                                                    </FormControl>
-                                                    <FormDescription>
-                                                        {t(
-                                                            "siteAutoUpdateDescription"
-                                                        )}
-                                                    </FormDescription>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            );
-                                        }}
-                                    />
-                                )}
+                                                                    disabled={
+                                                                        !hasAutoUpdateFeature
+                                                                    }
+                                                                />
+                                                                {isOverriding && (
+                                                                    <ButtonUI
+                                                                        type="button"
+                                                                        variant="link"
+                                                                        size="sm"
+                                                                        className="text-sm text-muted-foreground px-0"
+                                                                        onClick={() => {
+                                                                            form.setValue(
+                                                                                "autoUpdateOverrideOrg",
+                                                                                false
+                                                                            );
+                                                                            form.setValue(
+                                                                                "autoUpdateEnabled",
+                                                                                orgAutoUpdate
+                                                                            );
+                                                                        }}
+                                                                    >
+                                                                        {t(
+                                                                            "siteAutoUpdateResetToOrg"
+                                                                        )}
+                                                                    </ButtonUI>
+                                                                )}
+                                                            </div>
+                                                        </FormControl>
+                                                        <FormDescription>
+                                                            {t(
+                                                                "siteAutoUpdateDescription"
+                                                            )}{" "}
+                                                            <a
+                                                                href="https://docs.pangolin.net/manage/sites/auto-update"
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-primary hover:underline inline-flex items-center gap-1"
+                                                            >
+                                                                {t("learnMore")}
+                                                                <ExternalLink className="size-3.5 shrink-0" />
+                                                            </a>
+                                                        </FormDescription>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                );
+                                            }}
+                                        />
+                                    )}
                             </form>
                         </Form>
                     </SettingsSectionForm>

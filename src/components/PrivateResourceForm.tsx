@@ -1,5 +1,10 @@
 "use client";
 
+import {
+    SettingsSubsectionDescription,
+    SettingsSubsectionHeader,
+    SettingsSubsectionTitle
+} from "@app/components/Settings";
 import { HorizontalTabs } from "@app/components/HorizontalTabs";
 import {
     OptionSelect,
@@ -208,6 +213,7 @@ type InternalResourceFormProps = {
     formId: string;
     onSubmit: (values: InternalResourceFormValues) => void | Promise<void>;
     onSubmitDisabledChange?: (disabled: boolean) => void;
+    initialSites?: Selectedsite[];
 };
 
 export function PrivateResourceForm({
@@ -218,7 +224,8 @@ export function PrivateResourceForm({
     siteResourceId,
     formId,
     onSubmit,
-    onSubmitDisabledChange
+    onSubmitDisabledChange,
+    initialSites = []
 }: InternalResourceFormProps) {
     const t = useTranslations();
     const { env } = useEnvContext();
@@ -404,9 +411,9 @@ export function PrivateResourceForm({
 
     type FormData = z.infer<typeof formSchema>;
 
-    const rolesQuery = useQuery(orgQueries.roles({ orgId }));
-    const usersQuery = useQuery(orgQueries.users({ orgId }));
-    const clientsQuery = useQuery(orgQueries.machineClients({ orgId }));
+    const clientsQuery = useQuery(
+        orgQueries.machineClients({ orgId, perPage: 1 })
+    );
     const resourceRolesQuery = useQuery({
         ...resourceQueries.siteResourceRoles({
             siteResourceId: siteResourceId ?? 0
@@ -426,13 +433,6 @@ export function PrivateResourceForm({
         enabled: siteResourceId != null
     });
 
-    const allRoles = (rolesQuery.data ?? [])
-        .map((r) => ({ id: r.roleId.toString(), text: r.name }))
-        .filter((r) => r.text !== "Admin");
-    const allUsers = (usersQuery.data ?? []).map((u) => ({
-        id: u.id.toString(),
-        text: `${getUserDisplayName({ email: u.email, username: u.username })}${u.type !== UserType.Internal ? ` (${u.idpName})` : ""}`
-    }));
     const allClients = (clientsQuery.data ?? [])
         .filter((c) => !c.userId)
         .map((c) => ({ id: c.clientId.toString(), text: c.name }));
@@ -471,8 +471,6 @@ export function PrivateResourceForm({
     }
 
     const loadingRolesUsers =
-        rolesQuery.isLoading ||
-        usersQuery.isLoading ||
         clientsQuery.isLoading ||
         (siteResourceId != null &&
             (resourceRolesQuery.isLoading ||
@@ -480,16 +478,6 @@ export function PrivateResourceForm({
                 resourceClientsQuery.isLoading));
 
     const hasMachineClients = allClients.length > 0;
-
-    const [activeRolesTagIndex, setActiveRolesTagIndex] = useState<
-        number | null
-    >(null);
-    const [activeUsersTagIndex, setActiveUsersTagIndex] = useState<
-        number | null
-    >(null);
-    const [activeClientsTagIndex, setActiveClientsTagIndex] = useState<
-        number | null
-    >(null);
 
     const [sshServerMode, setSshServerMode] = useState<"standard" | "native">(
         () => {
@@ -563,7 +551,7 @@ export function PrivateResourceForm({
                   mode: "host",
                   destination: "",
                   alias: null,
-                  destinationPort: 22,
+                  destinationPort: null,
                   scheme: "http",
                   ssl: true,
                   httpConfigSubdomain: null,
@@ -592,6 +580,7 @@ export function PrivateResourceForm({
     });
 
     const mode = form.watch("mode");
+    const aliasValue = form.watch("alias");
     const httpConfigSubdomain = form.watch("httpConfigSubdomain");
     const httpConfigDomainId = form.watch("httpConfigDomainId");
     const httpConfigFullDomain = form.watch("httpConfigFullDomain");
@@ -607,8 +596,13 @@ export function PrivateResourceForm({
         !isNative &&
         pamMode === "push" &&
         authDaemonMode === "remote";
+    const aliasEndsWithLocal =
+        typeof aliasValue === "string" &&
+        aliasValue.trim().toLowerCase().endsWith(".local");
     const hasInitialized = useRef(false);
     const previousResourceId = useRef<number | null>(null);
+    const initialSitesRef = useRef(initialSites);
+    initialSitesRef.current = initialSites;
 
     useEffect(() => {
         const tcpValue = getPortStringFromMode(tcpPortMode, tcpCustomPorts);
@@ -623,9 +617,13 @@ export function PrivateResourceForm({
     // Reset when create dialog opens
     useEffect(() => {
         if (variant === "create" && open) {
+            const prefillSites =
+                initialSitesRef.current.length > 0
+                    ? initialSitesRef.current
+                    : [];
             form.reset({
                 name: "",
-                siteIds: [],
+                siteIds: prefillSites.map((s) => s.siteId),
                 mode: "host",
                 destination: "",
                 alias: null,
@@ -645,7 +643,7 @@ export function PrivateResourceForm({
                 users: [],
                 clients: []
             });
-            setSelectedSites([]);
+            setSelectedSites(prefillSites);
             setSshServerMode("native");
             setTcpPortMode("all");
             setUdpPortMode("all");
@@ -1025,9 +1023,35 @@ export function PrivateResourceForm({
                                                                 modeOptions
                                                             }
                                                             value={field.value}
-                                                            onChange={
-                                                                field.onChange
-                                                            }
+                                                            onChange={(
+                                                                newMode
+                                                            ) => {
+                                                                field.onChange(
+                                                                    newMode
+                                                                );
+                                                                if (
+                                                                    newMode ===
+                                                                    "ssh"
+                                                                ) {
+                                                                    form.setValue(
+                                                                        "destinationPort",
+                                                                        22
+                                                                    );
+                                                                } else if (
+                                                                    newMode ===
+                                                                    "http"
+                                                                ) {
+                                                                    form.setValue(
+                                                                        "destinationPort",
+                                                                        443
+                                                                    );
+                                                                } else {
+                                                                    form.setValue(
+                                                                        "destinationPort",
+                                                                        null
+                                                                    );
+                                                                }
+                                                            }}
                                                             cols={2}
                                                         />
                                                         <FormMessage />
@@ -1189,6 +1213,13 @@ export function PrivateResourceForm({
                                                             }
                                                         />
                                                     </FormControl>
+                                                    {aliasEndsWithLocal && (
+                                                        <p className="text-xs text-amber-700/80 mt-1">
+                                                            {t(
+                                                                "internalResourceAliasLocalWarning"
+                                                            )}
+                                                        </p>
+                                                    )}
                                                     <FormMessage />
                                                 </FormItem>
                                             )}
@@ -1717,6 +1748,7 @@ export function PrivateResourceForm({
                                                         field.value ?? []
                                                     }
                                                     orgId={orgId}
+                                                    restrictAdminRole
                                                     onSelectRoles={(
                                                         newUsers
                                                     ) => {
@@ -1799,8 +1831,8 @@ export function PrivateResourceForm({
                             />
 
                             {/* Mode */}
-                            <div className="space-y-3">
-                                <p className="text-sm font-semibold">
+                            <div className="space-y-2">
+                                <p className="font-semibold text-sm">
                                     {t("sshServerMode")}
                                 </p>
                                 <StrategySelect<"standard" | "native">
@@ -1856,8 +1888,8 @@ export function PrivateResourceForm({
                                 />
                             </div>
 
-                            <div className="space-y-3">
-                                <p className="text-sm font-semibold">
+                            <div className="space-y-2">
+                                <p className="font-semibold text-sm">
                                     {t("sshAuthenticationMethod")}
                                 </p>
                                 <FormField
@@ -1951,8 +1983,8 @@ export function PrivateResourceForm({
 
                             {/* Daemon Location (standard + push) */}
                             {showDaemonLocation && (
-                                <div className="space-y-3">
-                                    <p className="text-sm font-semibold">
+                                <div className="space-y-2">
+                                    <p className="font-semibold text-sm">
                                         {t("sshAuthDaemonLocation")}
                                     </p>
                                     <FormField
@@ -2040,7 +2072,7 @@ export function PrivateResourceForm({
                                     <p className="text-sm text-muted-foreground">
                                         {t("sshDaemonDisclaimer")}{" "}
                                         <a
-                                            href="https://docs.pangolin.net/manage/resources/private/ssh"
+                                            href="https://docs.pangolin.net/manage/ssh"
                                             target="_blank"
                                             rel="noopener noreferrer"
                                             className="text-primary hover:underline inline-flex items-center gap-1"
@@ -2054,51 +2086,57 @@ export function PrivateResourceForm({
 
                             {/* Daemon Port (standard + push + remote) */}
                             {showDaemonPort && (
-                                <FormField
-                                    control={form.control}
-                                    name="authDaemonPort"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>
-                                                {t("sshDaemonPort")}
-                                            </FormLabel>
-                                            <FormControl>
-                                                <Input
-                                                    type="number"
-                                                    min={1}
-                                                    max={65535}
-                                                    placeholder="22123"
-                                                    disabled={
-                                                        sshSectionDisabled
-                                                    }
-                                                    value={field.value ?? ""}
-                                                    onChange={(e) => {
-                                                        if (sshSectionDisabled)
-                                                            return;
-                                                        const v =
-                                                            e.target.value;
-                                                        if (v === "") {
-                                                            field.onChange(
-                                                                null
-                                                            );
-                                                            return;
+                                <div className="w-full md:w-1/2">
+                                    <FormField
+                                        control={form.control}
+                                        name="authDaemonPort"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>
+                                                    {t("sshDaemonPort")}
+                                                </FormLabel>
+                                                <FormControl>
+                                                    <Input
+                                                        type="number"
+                                                        min={1}
+                                                        max={65535}
+                                                        placeholder="22123"
+                                                        disabled={
+                                                            sshSectionDisabled
                                                         }
-                                                        const num = parseInt(
-                                                            v,
-                                                            10
-                                                        );
-                                                        field.onChange(
-                                                            Number.isNaN(num)
-                                                                ? null
-                                                                : num
-                                                        );
-                                                    }}
-                                                />
-                                            </FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
+                                                        value={
+                                                            field.value ?? ""
+                                                        }
+                                                        onChange={(e) => {
+                                                            if (
+                                                                sshSectionDisabled
+                                                            )
+                                                                return;
+                                                            const v =
+                                                                e.target.value;
+                                                            if (v === "") {
+                                                                field.onChange(
+                                                                    null
+                                                                );
+                                                                return;
+                                                            }
+                                                            const num =
+                                                                parseInt(v, 10);
+                                                            field.onChange(
+                                                                Number.isNaN(
+                                                                    num
+                                                                )
+                                                                    ? null
+                                                                    : num
+                                                            );
+                                                        }}
+                                                    />
+                                                </FormControl>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
+                                </div>
                             )}
                         </div>
                     )}

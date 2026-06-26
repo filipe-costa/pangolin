@@ -26,7 +26,7 @@ const listAllSiteResourcesByOrgParamsSchema = z.strictObject({
     orgId: z.string()
 });
 
-const listAllSiteResourcesByOrgQuerySchema = z.object({
+const listAllSiteResourcesByOrgQuerySchema = z.strictObject({
     pageSize: z.coerce
         .number<string>() // for prettier formatting
         .int()
@@ -232,7 +232,7 @@ registry.registerPath({
             content: {
                 "application/json": {
                     schema: z.object({
-                        data: z.unknown().nullable(),
+                        data: z.record(z.string(), z.any()).nullable(),
                         success: z.boolean(),
                         error: z.boolean(),
                         message: z.string(),

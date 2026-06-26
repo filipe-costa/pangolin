@@ -11,7 +11,7 @@ import {
     primaryKey,
     uniqueIndex
 } from "drizzle-orm/pg-core";
-import { InferSelectModel } from "drizzle-orm";
+import { InferSelectModel, sql } from "drizzle-orm";
 import {
     domains,
     orgs,
@@ -207,17 +207,28 @@ export const remoteExitNodeSessions = pgTable("remoteExitNodeSession", {
     expiresAt: bigint("expiresAt", { mode: "number" }).notNull()
 });
 
-export const loginPage = pgTable("loginPage", {
-    loginPageId: serial("loginPageId").primaryKey(),
-    subdomain: varchar("subdomain"),
-    fullDomain: varchar("fullDomain"),
-    exitNodeId: integer("exitNodeId").references(() => exitNodes.exitNodeId, {
-        onDelete: "set null"
-    }),
-    domainId: varchar("domainId").references(() => domains.domainId, {
-        onDelete: "set null"
-    })
-});
+export const loginPage = pgTable(
+    "loginPage",
+    {
+        loginPageId: serial("loginPageId").primaryKey(),
+        subdomain: varchar("subdomain"),
+        fullDomain: varchar("fullDomain"),
+        exitNodeId: integer("exitNodeId").references(
+            () => exitNodes.exitNodeId,
+            {
+                onDelete: "set null"
+            }
+        ),
+        domainId: varchar("domainId").references(() => domains.domainId, {
+            onDelete: "set null"
+        })
+    },
+    (t) => [
+        index("idx_loginpage_fulldomain")
+            .on(t.fullDomain)
+            .where(sql`${t.fullDomain} IS NOT NULL`)
+    ]
+);
 
 export const loginPageOrg = pgTable("loginPageOrg", {
     loginPageId: integer("loginPageId")
@@ -580,24 +591,6 @@ export const trialNotifications = pgTable("trialNotifications", {
     sentAt: bigint("sentAt", { mode: "number" }).notNull()
 });
 
-export const browserGatewayTarget = pgTable("browserGatewayTarget", {
-    browserGatewayTargetId: serial("browserGatewayTargetId").primaryKey(),
-    resourceId: integer("resourceId")
-        .references(() => resources.resourceId, {
-            onDelete: "cascade"
-        })
-        .notNull(),
-    siteId: integer("siteId")
-        .references(() => sites.siteId, {
-            onDelete: "cascade"
-        })
-        .notNull(),
-    authToken: varchar("authToken").notNull(),
-    type: varchar("type").notNull(), // "ssh", "rdp", "vnc"
-    destination: varchar("destination").notNull(),
-    destinationPort: integer("destinationPort").notNull()
-});
-
 export type Approval = InferSelectModel<typeof approvals>;
 export type Limit = InferSelectModel<typeof limits>;
 export type Account = InferSelectModel<typeof account>;
@@ -645,6 +638,3 @@ export type AlertEmailRecipients = InferSelectModel<
 >;
 export type AlertWebhookActions = InferSelectModel<typeof alertWebhookActions>;
 export type TrialNotification = InferSelectModel<typeof trialNotifications>;
-export type BrowserGatewayTarget = InferSelectModel<
-    typeof browserGatewayTarget
->;

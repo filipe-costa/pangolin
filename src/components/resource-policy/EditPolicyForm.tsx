@@ -8,46 +8,37 @@ import { usePaidStatus } from "@app/hooks/usePaidStatus";
 
 import { orgQueries } from "@app/lib/queries";
 import { build } from "@server/build";
-import { tierMatrix } from "@server/lib/billing/tierMatrix";
+import { TierFeature, tierMatrix } from "@server/lib/billing/tierMatrix";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
-
-import { createApiClient } from "@app/lib/api";
-import { useRouter } from "next/navigation";
 
 import { useMemo } from "react";
-import { EditPolicyAuthMethodsSectionForm } from "./EditPolicyAuthMethodsSectionForm";
 import { EditPolicyNameSectionForm } from "./EditPolicyNameSectionForm";
-import { EditPolicyUsersRolesSectionForm } from "./EditPolicyUserRolesSectionForm";
-import { EditPolicyOtpEmailSectionForm } from "./EditPolicyOtpEmailSectionForm";
-import { EditPolicyRulesSectionForm } from "./EditPolicyRulesSectionForm";
+import { PolicyAuthStackSection } from "./PolicyAuthStackSection";
+import { PolicyAccessRulesSection } from "./PolicyAccessRulesSection";
+import { PaidFeaturesAlert } from "@app/components/PaidFeaturesAlert";
 
-// ─── EditPolicyForm ─────────────────────────────────────────────────────────
+export type EditPolicyFormSection = "general" | "authentication" | "rules";
 
 export type EditPolicyFormProps = {
     hidePolicyNameForm?: boolean;
     readonly?: boolean;
     resourceId?: number;
+    section?: EditPolicyFormSection;
 };
 
 export function EditPolicyForm({
     hidePolicyNameForm,
     readonly,
-    resourceId
+    resourceId,
+    section
 }: EditPolicyFormProps) {
     const { org } = useOrgContext();
-    const t = useTranslations();
     const { env } = useEnvContext();
-    const api = createApiClient({ env });
-    // const [, formAction, isSubmitting] = useActionState(onSubmit, null);
     const { isPaidUser } = usePaidStatus();
-
-    const router = useRouter();
 
     // In overlay mode (resourceId provided), policy-level sections are locked.
     // Rules and users/roles sections handle their own hybrid logic via resourceId.
     const isOverlay = resourceId !== undefined;
-    const policyLevelReadonly = readonly || isOverlay;
 
     const isMaxmindAvailable = !!(
         env.server.maxmind_db_path && env.server.maxmind_db_path.length > 0
@@ -81,32 +72,104 @@ export function EditPolicyForm({
         return <></>;
     }
 
+    const policyTiers = tierMatrix[TierFeature.ResourcePolicies];
+    const isInlinePolicy = hidePolicyNameForm && resourceId === undefined;
+    const showPaidAlert = !isInlinePolicy;
+    const isDisabled = showPaidAlert && !isPaidUser(policyTiers);
+    const effectiveReadonly = readonly || isDisabled;
+
+    const authSection = (
+        <PolicyAuthStackSection
+            mode="edit"
+            orgId={org.org.orgId}
+            allIdps={allIdps}
+            emailEnabled={env.email.emailEnabled}
+            readonly={effectiveReadonly}
+            resourceId={resourceId}
+        />
+    );
+
+    const rulesSection = (
+        <PolicyAccessRulesSection
+            mode="edit"
+            isMaxmindAvailable={isMaxmindAvailable}
+            isMaxmindAsnAvailable={isMaxmindASNAvailable}
+            readonly={effectiveReadonly}
+            resourceId={resourceId}
+        />
+    );
+
+    if (section === "general") {
+        return (
+            <>
+                {showPaidAlert && <PaidFeaturesAlert tiers={policyTiers} />}
+                <div
+                    className={
+                        isDisabled
+                            ? "pointer-events-none opacity-50"
+                            : undefined
+                    }
+                >
+                    <EditPolicyNameSectionForm readonly={effectiveReadonly} />
+                </div>
+            </>
+        );
+    }
+
+    if (section === "authentication") {
+        return (
+            <>
+                {showPaidAlert && <PaidFeaturesAlert tiers={policyTiers} />}
+                <div
+                    className={
+                        isDisabled
+                            ? "pointer-events-none opacity-50"
+                            : undefined
+                    }
+                >
+                    {authSection}
+                </div>
+            </>
+        );
+    }
+
+    if (section === "rules") {
+        return (
+            <>
+                {showPaidAlert && <PaidFeaturesAlert tiers={policyTiers} />}
+                <div
+                    className={
+                        isDisabled
+                            ? "pointer-events-none opacity-50"
+                            : undefined
+                    }
+                >
+                    {rulesSection}
+                </div>
+            </>
+        );
+    }
+
     return (
-        <SettingsContainer>
-            {!hidePolicyNameForm && (
-                <EditPolicyNameSectionForm readonly={policyLevelReadonly} />
-            )}
+        <>
+            {showPaidAlert && <PaidFeaturesAlert tiers={policyTiers} />}
+            <div
+                className={
+                    isDisabled ? "pointer-events-none opacity-50" : undefined
+                }
+            >
+                <SettingsContainer>
+                    {!hidePolicyNameForm && !isOverlay && (
+                        <EditPolicyNameSectionForm
+                            readonly={effectiveReadonly}
+                        />
+                    )}
 
-            <EditPolicyUsersRolesSectionForm
-                orgId={org.org.orgId}
-                allIdps={allIdps}
-                readonly={readonly}
-                resourceId={resourceId}
-            />
+                    {authSection}
 
-            <EditPolicyAuthMethodsSectionForm readonly={policyLevelReadonly} />
-
-            <EditPolicyOtpEmailSectionForm
-                emailEnabled={env.email.emailEnabled}
-                readonly={policyLevelReadonly}
-            />
-
-            <EditPolicyRulesSectionForm
-                isMaxmindAvailable={isMaxmindAvailable}
-                isMaxmindAsnAvailable={isMaxmindASNAvailable}
-                readonly={readonly}
-                resourceId={resourceId}
-            />
-        </SettingsContainer>
+                    {rulesSection}
+                </SettingsContainer>
+            </div>
+        </>
     );
 }

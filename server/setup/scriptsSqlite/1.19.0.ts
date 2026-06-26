@@ -42,22 +42,6 @@ export default async function migration() {
         db.transaction(() => {
             db.prepare(
                 `
-            CREATE TABLE 'browserGatewayTarget' (
-                'browserGatewayTargetId' integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-                'resourceId' integer NOT NULL,
-                'siteId' integer NOT NULL,
-                'authToken' text NOT NULL,
-                'type' text NOT NULL,
-                'destination' text NOT NULL,
-                'destinationPort' integer NOT NULL,
-                FOREIGN KEY ('resourceId') REFERENCES 'resources'('resourceId') ON UPDATE no action ON DELETE cascade,
-                FOREIGN KEY ('siteId') REFERENCES 'sites'('siteId') ON UPDATE no action ON DELETE cascade
-            );
-                `
-            ).run();
-
-            db.prepare(
-                `
             CREATE TABLE 'clientLabels' (
                 'clientLabelId' integer PRIMARY KEY AUTOINCREMENT NOT NULL,
                 'clientId' integer NOT NULL,
@@ -244,7 +228,7 @@ export default async function migration() {
             ).run();
             db.prepare(
                 `
-            UPDATE 'siteResources' SET 'destination2' = 'destination';
+            UPDATE 'siteResources' SET "destination2" = "destination";
                 `
             ).run();
             db.prepare(
@@ -261,6 +245,13 @@ export default async function migration() {
                 `
 
             ALTER TABLE 'siteResources' ADD COLUMN 'pamMode' text DEFAULT 'passthrough';
+                `
+            ).run();
+            db.prepare(
+                `
+            UPDATE 'siteResources'
+            SET "pamMode" = 'push'
+            WHERE LOWER(COALESCE("mode", '')) = 'host';
                 `
             ).run();
             db.prepare(
@@ -348,6 +339,25 @@ export default async function migration() {
             db.prepare(
                 `
             ALTER TABLE 'resourceSessions' ADD 'policyWhitelistId' integer REFERENCES resourcePolicyWhitelist(id);
+                `
+            ).run();
+            db.prepare(
+                `
+            ALTER TABLE 'targets' ADD 'mode' text DEFAULT 'http' NOT NULL;
+                `
+            ).run();
+            db.prepare(
+                `
+            UPDATE 'targets'
+            SET "mode" = COALESCE((
+                SELECT "mode" FROM 'resources'
+                WHERE "resources"."resourceId" = "targets"."resourceId"
+            ), 'http');
+                `
+            ).run();
+            db.prepare(
+                `
+            ALTER TABLE 'targets' ADD 'authToken' text;
                 `
             ).run();
         })();
@@ -677,6 +687,29 @@ export default async function migration() {
                 `Migrated inline resource policies for ${existingResources.length} resource(s)`
             );
         }
+
+        // add one more transaction
+        db.transaction(() => {
+            // remove not null/default from sso, applyRules, and emailWhitelistEnabled in preparation for resource policies
+            db.prepare(`ALTER TABLE 'resources' DROP COLUMN 'sso';`).run();
+            db.prepare(
+                `ALTER TABLE 'resources' ADD COLUMN 'sso' integer;`
+            ).run();
+
+            db.prepare(
+                `ALTER TABLE 'resources' DROP COLUMN 'applyRules';`
+            ).run();
+            db.prepare(
+                `ALTER TABLE 'resources' ADD COLUMN 'applyRules' integer;`
+            ).run();
+
+            db.prepare(
+                `ALTER TABLE 'resources' DROP COLUMN 'emailWhitelistEnabled';`
+            ).run();
+            db.prepare(
+                `ALTER TABLE 'resources' ADD COLUMN 'emailWhitelistEnabled' integer;`
+            ).run();
+        })();
 
         console.log("Migrated database");
     } catch (e) {

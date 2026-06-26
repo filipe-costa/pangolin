@@ -42,6 +42,8 @@ import { SwitchInput } from "@app/components/SwitchInput";
 import { usePaidStatus } from "@app/hooks/usePaidStatus";
 import { tierMatrix, TierFeature } from "@server/lib/billing/tierMatrix";
 import { PaidFeaturesAlert } from "@app/components/PaidFeaturesAlert";
+import { ExternalLink } from "lucide-react";
+import { env } from "process";
 
 // Schema for general organization settings
 const GeneralFormSchema = z.object({
@@ -164,6 +166,7 @@ function DeleteForm({ org }: SectionFormProps) {
 
 function GeneralSectionForm({ org }: SectionFormProps) {
     const { updateOrg } = useOrgContext();
+    const { env } = useEnvContext();
     const form = useForm({
         resolver: zodResolver(
             GeneralFormSchema.pick({
@@ -264,27 +267,42 @@ function GeneralSectionForm({ org }: SectionFormProps) {
                             <PaidFeaturesAlert
                                 tiers={tierMatrix.newtAutoUpdate}
                             />
-                            <FormField
-                                control={form.control}
-                                name="settingsEnableGlobalNewtAutoUpdate"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormControl>
-                                            <SwitchInput
-                                                id="settings-enable-global-newt-auto-update"
-                                                label={t("newtAutoUpdate")}
-                                                checked={field.value}
-                                                onCheckedChange={field.onChange}
-                                                disabled={!hasAutoUpdateFeature}
-                                            />
-                                        </FormControl>
-                                        <FormDescription>
-                                            {t("newtAutoUpdateDescription")}
-                                        </FormDescription>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
+                            {!env.flags.disableEnterpriseFeatures && (
+                                <FormField
+                                    control={form.control}
+                                    name="settingsEnableGlobalNewtAutoUpdate"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormControl>
+                                                <SwitchInput
+                                                    id="settings-enable-global-newt-auto-update"
+                                                    label={t("newtAutoUpdate")}
+                                                    checked={field.value}
+                                                    onCheckedChange={
+                                                        field.onChange
+                                                    }
+                                                    disabled={
+                                                        !hasAutoUpdateFeature
+                                                    }
+                                                />
+                                            </FormControl>
+                                            <FormDescription>
+                                                {t("newtAutoUpdateDescription")}{" "}
+                                                <a
+                                                    href="https://docs.pangolin.net/manage/sites/auto-update"
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-primary hover:underline inline-flex items-center gap-1"
+                                                >
+                                                    {t("learnMore")}
+                                                    <ExternalLink className="size-3.5 shrink-0" />
+                                                </a>
+                                            </FormDescription>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+                            )}
                         </form>
                     </Form>
                 </SettingsSectionForm>

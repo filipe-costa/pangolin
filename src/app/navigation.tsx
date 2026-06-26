@@ -137,7 +137,7 @@ export const orgNavSections = (
                     }
                 ]
             },
-            ...(build !== "oss"
+            ...(!env?.flags.disableEnterpriseFeatures
                 ? [
                       {
                           title: "sidebarPolicies",
@@ -146,7 +146,7 @@ export const orgNavSections = (
                           items: [
                               {
                                   title: "sidebarResourcePolicies",
-                                  href: "/{orgId}/settings/policies/resource",
+                                  href: "/{orgId}/settings/policies/resources/public",
                                   icon: (
                                       <GlobeIcon className="size-4 flex-none" />
                                   )
@@ -156,10 +156,11 @@ export const orgNavSections = (
                   ]
                 : []),
             // PaidFeaturesAlert
-            ...((build === "oss" && !env?.flags.disableEnterpriseFeatures) ||
-            build === "saas" ||
-            env?.app.identityProviderMode === "org" ||
-            (env?.app.identityProviderMode === undefined && build !== "oss")
+            ...(!env?.flags.disableEnterpriseFeatures &&
+            (build === "saas" ||
+                env?.app.identityProviderMode === "org" ||
+                (env?.app.identityProviderMode === undefined &&
+                    build !== "oss"))
                 ? [
                       {
                           title: "sidebarIdentityProviders",
@@ -259,7 +260,7 @@ export const orgNavSections = (
                         href: "/{orgId}/settings/api-keys",
                         icon: <KeyRound className="size-4 flex-none" />
                     },
-                    ...(build !== "oss"
+                    ...(!env?.flags.disableEnterpriseFeatures
                         ? [
                               {
                                   title: "labels",
