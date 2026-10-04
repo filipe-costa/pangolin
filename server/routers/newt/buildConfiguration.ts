@@ -5,6 +5,7 @@ import {
     db,
     ExitNode,
     networks,
+    remoteExitNodeResources,
     resources,
     Site,
     siteNetworks,
@@ -14,10 +15,11 @@ import {
 } from "@server/db";
 import logger from "@server/logger";
 import { initPeerAddHandshake, updatePeer } from "../olm/peers";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, or, isNotNull, sql } from "drizzle-orm";
 import config from "@server/lib/config";
 import { decrypt } from "@server/lib/crypto";
 import {
+    batchFetchCertsForSiteResources,
     formatEndpoint,
     generateSubnetProxyTargetV2,
     SubnetProxyTargetV2
@@ -51,13 +53,13 @@ export async function buildClientConfigurationForNewtClient(
             clientsRes
                 .filter((client) => {
                     if (!client.clients.pubKey) {
-                        logger.warn(
+                        logger.debug(
                             `Client ${client.clients.clientId} has no public key, skipping`
                         );
                         return false;
                     }
                     if (!client.clients.subnet) {
-                        logger.warn(
+                        logger.debug(
                             `Client ${client.clients.clientId} has no subnet, skipping`
                         );
                         return false;
@@ -94,7 +96,7 @@ export async function buildClientConfigurationForNewtClient(
                         await updatePeer(client.clients.clientId, {
                             siteId: site.siteId,
                             endpoint: site.endpoint!,
-                            relayEndpoint: `${exitNode.endpoint}:${config.getRawConfig().gerbil.clients_start_port}`,
+                            relayEndpoint: formatEndpoint(exitNode.endpoint, config.getRawConfig().gerbil.clients_start_port),
                             publicKey: site.publicKey!,
                             serverIP: site.address,
                             serverPort: site.listenPort
@@ -147,7 +149,12 @@ export async function buildClientConfigurationForNewtClient(
         .from(siteResources)
         .innerJoin(networks, eq(siteResources.networkId, networks.networkId))
         .innerJoin(siteNetworks, eq(networks.networkId, siteNetworks.networkId))
-        .where(eq(siteNetworks.siteId, siteId))
+        .where(
+            and(
+                eq(siteNetworks.siteId, siteId),
+                eq(siteResources.enabled, true)
+            )
+        )
         .then((rows) => rows.map((r) => r.siteResources));
 
     const targetsToSend: SubnetProxyTargetV2[] = [];
@@ -200,11 +207,19 @@ export async function buildClientConfigurationForNewtClient(
         });
     }
 
+    // Batch-fetch certs for every SSL-enabled HTTP resource's domain in one
+    // call rather than letting each resource fetch its own — with thousands
+    // of resources this avoids a concurrent DB/cache stampede for what is
+    // often the very same (e.g. wildcard) certificate.
+    const certByDomain =
+        await batchFetchCertsForSiteResources(allSiteResources);
+
     const resourceTargetsArr = await Promise.all(
         allSiteResources.map((resource) =>
             generateSubnetProxyTargetV2(
                 resource,
-                clientsByResourceId.get(resource.siteResourceId) ?? []
+                clientsByResourceId.get(resource.siteResourceId) ?? [],
+                certByDomain
             )
         )
     );
@@ -223,9 +238,10 @@ export async function buildClientConfigurationForNewtClient(
 
 export async function buildTargetConfigurationForNewtClient(
     siteId: number,
-    version?: string | null
+    version?: string | null,
+    remoteExitNodeId?: string
 ) {
-    // Get all enabled targets with their resource mode information
+    // Get enabled HTTP/TCP/UDP targets for resources and AI providers
     const allTargets = await db
         .select({
             resourceId: targets.resourceId,
@@ -235,15 +251,18 @@ export async function buildTargetConfigurationForNewtClient(
             port: targets.port,
             internalPort: targets.internalPort,
             enabled: targets.enabled,
-            mode: resources.mode
+            mode: sql<string>`COALESCE(${resources.mode}, ${targets.mode})`.mapWith(
+                String
+            )
         })
         .from(targets)
-        .innerJoin(resources, eq(targets.resourceId, resources.resourceId))
+        .leftJoin(resources, eq(targets.resourceId, resources.resourceId))
         .where(
             and(
                 eq(targets.siteId, siteId),
                 eq(targets.enabled, true),
-                inArray(targets.mode, ["http", "udp", "tcp"])
+                inArray(targets.mode, ["http", "udp", "tcp"]),
+                or(isNotNull(targets.resourceId), isNotNull(targets.providerId))
             )
         );
 
@@ -379,10 +398,24 @@ export async function buildTargetConfigurationForNewtClient(
         };
     });
 
+    let remoteExitNodeSubnets: string[] = [];
+    if (remoteExitNodeId) {
+        const remoteNodeResources = await db
+            .select()
+            .from(remoteExitNodeResources)
+            .where(
+                eq(remoteExitNodeResources.remoteExitNodeId, remoteExitNodeId)
+            );
+
+        // filter through these and provide the subnets
+        remoteExitNodeSubnets = remoteNodeResources.map((r) => r.destination);
+    }
+
     return {
         validHealthCheckTargets,
         tcpTargets,
         udpTargets,
-        browserGatewayTargets
+        browserGatewayTargets,
+        remoteExitNodeSubnets
     };
 }

@@ -68,6 +68,7 @@ export type QueryAccessAuditLogResponse = {
         actorType: string | null;
         actorId: string | null;
         resourceId: number | null;
+        siteResourceId: number | null;
         resourceName: string | null;
         resourceNiceId: string | null;
         ip: string | null;
@@ -90,6 +91,72 @@ export type QueryAccessAuditLogResponse = {
             name: string | null;
         }[];
         locations: string[];
+    };
+};
+
+export type QueryAiSessionLogResponse = {
+    log: {
+        id: number;
+        sessionId: string;
+        orgId: string | null;
+        providerId: number | null;
+        providerName: string | null;
+        providerType: string | null;
+        capability: string;
+        resourceId: number | null;
+        siteResourceId: number | null;
+        resourceName: string | null;
+        resourceNiceId: string | null;
+        resourceType: "public" | "site" | null;
+        userId: string | null;
+        userEmail: string | null;
+        virtualApiKeyId: string | null;
+        virtualApiKeyName: string | null;
+        virtualApiKeyLastChars: string | null;
+        requestedModel: string | null;
+        isStream: boolean;
+        requestBody: string | null;
+        responseBody: string | null;
+        normalizedRequest: string | null;
+        normalizedResponse: string | null;
+        truncated: boolean;
+        statusCode: number | null;
+        createdAt: number;
+        usage: {
+            promptTokens: number;
+            cacheReadTokens: number;
+            cacheWriteTokens: number;
+            completionTokens: number;
+            reasoningTokens: number;
+            totalTokens: number;
+            costUsd: number | null;
+            estimated: boolean;
+        } | null;
+    }[];
+    pagination: {
+        total: number;
+        limit: number;
+        offset: number;
+    };
+    filterAttributes: {
+        providers: {
+            id: number;
+            name: string | null;
+        }[];
+        resources: {
+            id: number;
+            name: string | null;
+        }[];
+        users: {
+            id: string;
+            email: string | null;
+        }[];
+        virtualApiKeys: {
+            id: string;
+            name: string | null;
+            lastChars: string | null;
+        }[];
+        models: string[];
     };
 };
 

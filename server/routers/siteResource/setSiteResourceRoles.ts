@@ -9,7 +9,10 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { eq, and, ne, inArray } from "drizzle-orm";
 import { OpenAPITags, registry } from "@server/openApi";
-import { rebuildClientAssociationsFromSiteResource } from "@server/lib/rebuildClientAssociations";
+import {
+    rebuildClientAssociationsFromSiteResource,
+    isOrgRebuildRateLimited
+} from "@server/lib/rebuildClientAssociations";
 
 const setSiteResourceRolesBodySchema = z
     .object({
@@ -29,6 +32,40 @@ const setSiteResourceRolesParamsSchema = z
 registry.registerPath({
     method: "post",
     path: "/site-resource/{siteResourceId}/roles",
+    description:
+        "Set roles for a site resource. This will replace all existing roles.",
+    tags: [OpenAPITags.PrivateResourceLegacy],
+    request: {
+        params: setSiteResourceRolesParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: setSiteResourceRolesBodySchema
+                }
+            }
+        }
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "post",
+    path: "/private-resource/{resourceId}/roles",
     description:
         "Set roles for a site resource. This will replace all existing roles.",
     tags: [OpenAPITags.PrivateResource, OpenAPITags.Role],
@@ -104,6 +141,15 @@ export async function setSiteResourceRoles(
                 createHttpError(
                     HttpCode.INTERNAL_SERVER_ERROR,
                     "Site resource not found"
+                )
+            );
+        }
+
+        if (await isOrgRebuildRateLimited(siteResource.orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
                 )
             );
         }

@@ -53,9 +53,10 @@ async function queryInlinePolicy(resourcePolicyId: number) {
 
 export type GetResourceResponse = Omit<
     NonNullable<Awaited<ReturnType<typeof query>>>,
-    "headers"
+    "requestHeaders" | "responseHeaders"
 > & {
-    headers: { name: string; value: string }[] | null;
+    requestHeaders: { name: string; value: string }[] | null;
+    responseHeaders: { name: string; value: string }[] | null;
 };
 
 registry.registerPath({
@@ -63,7 +64,7 @@ registry.registerPath({
     path: "/org/{orgId}/resource/{niceId}",
     description:
         "Get a resource by orgId and niceId. NiceId is a readable ID for the resource and unique on a per org basis.",
-    tags: [OpenAPITags.PublicResource],
+    tags: [OpenAPITags.PublicResourceLegacy],
     request: {
         params: z.object({
             orgId: z.string(),
@@ -91,6 +92,34 @@ registry.registerPath({
 registry.registerPath({
     method: "get",
     path: "/resource/{resourceId}",
+    description: "Get a resource by resourceId.",
+    tags: [OpenAPITags.PublicResourceLegacy],
+    request: {
+        params: z.object({
+            resourceId: z.number()
+        })
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "get",
+    path: "/public-resource/{resourceId}",
     description: "Get a resource by resourceId.",
     tags: [OpenAPITags.PublicResource],
     request: {
@@ -158,9 +187,12 @@ export async function getResource(
         return response<GetResourceResponse>(res, {
             data: {
                 ...returnData,
-                headers: returnData.headers
-                    ? JSON.parse(returnData.headers)
-                    : returnData.headers
+                requestHeaders: returnData.requestHeaders
+                    ? JSON.parse(returnData.requestHeaders)
+                    : returnData.requestHeaders,
+                responseHeaders: returnData.responseHeaders
+                    ? JSON.parse(returnData.responseHeaders)
+                    : returnData.responseHeaders
             },
             success: true,
             error: false,

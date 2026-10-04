@@ -21,7 +21,10 @@ import { isValidIP } from "@server/lib/validators";
 import { isIpInCidr } from "@server/lib/ip";
 import { listExitNodes } from "#dynamic/lib/exitNodes";
 import { OpenAPITags, registry } from "@server/openApi";
-import { rebuildClientAssociationsFromClient } from "@server/lib/rebuildClientAssociations";
+import {
+    rebuildClientAssociationsFromClient,
+    isOrgRebuildRateLimited
+} from "@server/lib/rebuildClientAssociations";
 import { getUniqueClientName } from "@server/db/names";
 
 const paramsSchema = z
@@ -146,6 +149,15 @@ export async function createUserClient(
             );
         }
 
+        if (await isOrgRebuildRateLimited(orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
+                )
+            );
+        }
+
         const updatedSubnet = `${subnet}/${org.subnet.split("/")[1]}`; // we want the block size of the whole org
 
         // make sure the subnet is unique
@@ -210,11 +222,6 @@ export async function createUserClient(
 
         let newClient: Client | null = null;
         await db.transaction(async (trx) => {
-            // TODO: more intelligent way to pick the exit node
-            const exitNodesList = await listExitNodes(orgId);
-            const randomExitNode =
-                exitNodesList[Math.floor(Math.random() * exitNodesList.length)];
-
             const [adminRole] = await trx
                 .select()
                 .from(roles)
@@ -232,7 +239,6 @@ export async function createUserClient(
             [newClient] = await trx
                 .insert(clients)
                 .values({
-                    exitNodeId: randomExitNode.exitNodeId,
                     orgId,
                     niceId,
                     name,

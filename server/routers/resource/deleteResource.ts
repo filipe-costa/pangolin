@@ -11,6 +11,8 @@ import {
     performDeleteResource,
     runResourceDeleteSideEffects
 } from "@server/lib/deleteResource";
+import { LimitId } from "@server/lib/billing";
+import { usageService } from "@server/lib/billing/usageService";
 
 const deleteResourceSchema = z.strictObject({
     resourceId: z.coerce.number().int().positive()
@@ -19,6 +21,32 @@ const deleteResourceSchema = z.strictObject({
 registry.registerPath({
     method: "delete",
     path: "/resource/{resourceId}",
+    description: "Delete a resource.",
+    tags: [OpenAPITags.PublicResourceLegacy],
+    request: {
+        params: deleteResourceSchema
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "delete",
+    path: "/public-resource/{resourceId}",
     description: "Delete a resource.",
     tags: [OpenAPITags.PublicResource],
     request: {
@@ -64,6 +92,14 @@ export async function deleteResource(
 
         await db.transaction(async (trx) => {
             deleteResult = await performDeleteResource(resourceId, trx);
+            if (deleteResult?.deletedResource?.orgId) {
+                await usageService.add(
+                    deleteResult?.deletedResource?.orgId,
+                    LimitId.PUBLIC_RESOURCES,
+                    -1,
+                    trx
+                );
+            }
         });
 
         if (!deleteResult) {

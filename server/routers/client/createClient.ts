@@ -24,9 +24,14 @@ import { isIpInCidr } from "@server/lib/ip";
 import { listExitNodes } from "#dynamic/lib/exitNodes";
 import { generateId } from "@server/auth/sessions/app";
 import { OpenAPITags, registry } from "@server/openApi";
-import { rebuildClientAssociationsFromClient } from "@server/lib/rebuildClientAssociations";
+import {
+    rebuildClientAssociationsFromClient,
+    isOrgRebuildRateLimited
+} from "@server/lib/rebuildClientAssociations";
 import { getUniqueClientName } from "@server/db/names";
 import { build } from "@server/build";
+import { LimitId } from "@server/lib/billing";
+import { usageService } from "@server/lib/billing/usageService";
 
 const createClientParamsSchema = z.strictObject({
     orgId: z.string()
@@ -125,6 +130,38 @@ export async function createClient(
             );
         }
 
+        if (build == "saas") {
+            const usage = await usageService.getUsage(
+                orgId,
+                LimitId.MACHINE_CLIENTS
+            );
+            if (!usage) {
+                return next(
+                    createHttpError(
+                        HttpCode.NOT_FOUND,
+                        "No usage data found for this organization"
+                    )
+                );
+            }
+            const rejectClient = await usageService.checkLimitSet(
+                orgId,
+
+                LimitId.MACHINE_CLIENTS,
+                {
+                    ...usage,
+                    instantaneousValue: (usage.instantaneousValue || 0) + 1
+                } // We need to add one to know if we are violating the limit
+            );
+            if (rejectClient) {
+                return next(
+                    createHttpError(
+                        HttpCode.FORBIDDEN,
+                        "Machine client limit exceeded. Please upgrade your plan."
+                    )
+                );
+            }
+        }
+
         const [org] = await db.select().from(orgs).where(eq(orgs.orgId, orgId));
 
         if (!org) {
@@ -150,6 +187,15 @@ export async function createClient(
                 createHttpError(
                     HttpCode.BAD_REQUEST,
                     "IP is not in the CIDR range of the subnet."
+                )
+            );
+        }
+
+        if (await isOrgRebuildRateLimited(orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
                 )
             );
         }
@@ -209,20 +255,6 @@ export async function createClient(
 
         let newClient: Client | null = null;
         await db.transaction(async (trx) => {
-            // TODO: more intelligent way to pick the exit node
-            const exitNodesList = await listExitNodes(orgId);
-            const randomExitNode =
-                exitNodesList[Math.floor(Math.random() * exitNodesList.length)];
-
-            if (!randomExitNode) {
-                return next(
-                    createHttpError(
-                        HttpCode.NOT_FOUND,
-                        `No exit nodes available. ${build == "saas" ? "Please contact support." : "You need to install gerbil to use the clients."}`
-                    )
-                );
-            }
-
             const [adminRole] = await trx
                 .select()
                 .from(roles)
@@ -241,7 +273,6 @@ export async function createClient(
                 .insert(clients)
                 .values({
                     niceId,
-                    exitNodeId: randomExitNode.exitNodeId,
                     orgId,
                     name,
                     subnet: updatedSubnet,
@@ -277,6 +308,8 @@ export async function createClient(
                 clientId: newClient.clientId,
                 dateCreated: moment().toISOString()
             });
+
+            await usageService.add(orgId, LimitId.MACHINE_CLIENTS, 1, trx);
         });
 
         if (newClient) {
@@ -291,7 +324,7 @@ export async function createClient(
             data: newClient,
             success: true,
             error: false,
-            message: "Site created successfully",
+            message: "Client created successfully",
             status: HttpCode.CREATED
         });
     } catch (error) {

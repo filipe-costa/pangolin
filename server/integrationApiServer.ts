@@ -12,11 +12,11 @@ import { logIncomingMiddleware } from "./middlewares/logIncoming";
 import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
-import { registry } from "./openApi";
+import { registry, openApiTags } from "./openApi";
 import fs from "fs";
 import path from "path";
 import { APP_PATH } from "./lib/consts";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import { z } from "zod";
 
 const dev = process.env.ENVIRONMENT !== "prod";
@@ -181,7 +181,8 @@ function getOpenApiDocumentation() {
             version: "v1",
             title: "Pangolin Integration API"
         },
-        servers: [{ url: "/v1" }]
+        servers: [{ url: "/v1" }],
+        tags: openApiTags
     });
 
     if (!process.env.DISABLE_GEN_OPENAPI) {

@@ -25,15 +25,14 @@ import { fromError } from "zod-validation-error";
 import { defaultRoleAllowedActions } from "../role";
 import { OpenAPITags, registry } from "@server/openApi";
 import { isValidCIDR } from "@server/lib/validators";
-import { createCustomer } from "#dynamic/lib/billing";
+import { createCustomer, linkEmailOrg } from "#dynamic/lib/billing";
 import { usageService } from "@server/lib/billing/usageService";
-import { FeatureId, limitsService, freeLimitSet } from "@server/lib/billing";
+import { LimitId, limitsService, freeLimitSet } from "@server/lib/billing";
 import { build } from "@server/build";
 import { calculateUserClientsForOrgs } from "@server/lib/calculateUserClientsForOrgs";
 import { doCidrsOverlap } from "@server/lib/ip";
 import { generateCA } from "@server/lib/sshCA";
 import { encrypt } from "@server/lib/crypto";
-import { generateId } from "@server/auth/sessions/app";
 
 const validOrgIdRegex = /^[a-z0-9_]+(-[a-z0-9_]+)*$/;
 
@@ -202,7 +201,7 @@ export async function createOrg(
         if (build == "saas" && billingOrgIdForNewOrg) {
             const usage = await usageService.getUsage(
                 billingOrgIdForNewOrg,
-                FeatureId.ORGINIZATIONS
+                LimitId.ORGANIZATIONS
             );
             if (!usage) {
                 return next(
@@ -214,7 +213,7 @@ export async function createOrg(
             }
             const rejectOrgs = await usageService.checkLimitSet(
                 billingOrgIdForNewOrg,
-                FeatureId.ORGINIZATIONS,
+                LimitId.ORGANIZATIONS,
                 {
                     ...usage,
                     instantaneousValue: (usage.instantaneousValue || 0) + 1
@@ -421,17 +420,18 @@ export async function createOrg(
             if (customerId) {
                 await usageService.updateCount(
                     orgId,
-                    FeatureId.USERS,
+                    LimitId.USERS,
                     1,
                     customerId
                 ); // Only 1 because we are creating the org
             }
+            await linkEmailOrg(orgId, req.user?.email);
         }
 
         if (numOrgs) {
             usageService.updateCount(
                 billingOrgIdForNewOrg || orgId,
-                FeatureId.ORGINIZATIONS,
+                LimitId.ORGANIZATIONS,
                 numOrgs
             );
         }

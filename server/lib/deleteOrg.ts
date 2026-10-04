@@ -24,7 +24,7 @@ import { deletePeer } from "@server/routers/gerbil/peers";
 import { OlmErrorCodes } from "@server/routers/olm/error";
 import { sendTerminateClient } from "@server/routers/client/terminate";
 import { usageService } from "./billing/usageService";
-import { FeatureId } from "./billing";
+import { LimitId } from "./billing";
 
 export type DeleteOrgByIdResult = {
     deletedNewtIds: string[];
@@ -93,6 +93,9 @@ export async function deleteOrgById(
             await trx.delete(sites).where(eq(sites.siteId, site.siteId));
         }
         for (const client of orgClients) {
+            if (client.exitNodeId && client.pubKey) {
+                await deletePeer(client.exitNodeId, client.pubKey);
+            }
             const [olm] = await trx
                 .select()
                 .from(olms)
@@ -140,7 +143,9 @@ export async function deleteOrgById(
                 .select({ count: count() })
                 .from(orgDomains)
                 .where(eq(orgDomains.domainId, domainId));
-            logger.info(`Found ${orgCount.count} orgs using domain ${domainId}`);
+            logger.info(
+                `Found ${orgCount.count} orgs using domain ${domainId}`
+            );
             if (orgCount.count === 1) {
                 domainIdsToDelete.push(domainId);
             }
@@ -152,7 +157,7 @@ export async function deleteOrgById(
                 .where(inArray(domains.domainId, domainIdsToDelete));
         }
 
-        await usageService.add(orgId, FeatureId.ORGINIZATIONS, -1, trx); // here we are decreasing the org count BEFORE deleting the org because we need to still be able to get the org to get the billing org inside of here
+        await usageService.add(orgId, LimitId.ORGANIZATIONS, -1, trx); // here we are decreasing the org count BEFORE deleting the org because we need to still be able to get the org to get the billing org inside of here
 
         await trx.delete(orgs).where(eq(orgs.orgId, orgId));
 
@@ -199,22 +204,22 @@ export async function deleteOrgById(
     if (org.billingOrgId) {
         usageService.updateCount(
             org.billingOrgId,
-            FeatureId.DOMAINS,
+            LimitId.DOMAINS,
             domainCount ?? 0
         );
         usageService.updateCount(
             org.billingOrgId,
-            FeatureId.SITES,
+            LimitId.SITES,
             siteCount ?? 0
         );
         usageService.updateCount(
             org.billingOrgId,
-            FeatureId.USERS,
+            LimitId.USERS,
             userCount ?? 0
         );
         usageService.updateCount(
             org.billingOrgId,
-            FeatureId.REMOTE_EXIT_NODES,
+            LimitId.REMOTE_EXIT_NODES,
             remoteExitNodeCount ?? 0
         );
     }

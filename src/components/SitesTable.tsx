@@ -1,7 +1,7 @@
 "use client";
 
 import ConfirmDeleteDialog from "@app/components/ConfirmDeleteDialog";
-import UptimeMiniBar from "@app/components/UptimeMiniBar";
+import { UptimeMiniBar } from "@app/components/UptimeMiniBar";
 
 import {
     Credenza,
@@ -52,13 +52,11 @@ import {
 } from "./ui/controlled-data-table";
 
 import { useOptimisticLabels } from "@app/hooks/useOptimisticLabels";
-import { usePaidStatus } from "@app/hooks/usePaidStatus";
-import { tierMatrix } from "@server/lib/billing/tierMatrix";
+import { orgQueries, productUpdatesQueries } from "@app/lib/queries";
+import { useQuery } from "@tanstack/react-query";
+import semver from "semver";
 import { LabelColumnFilterButton } from "./LabelColumnFilterButton";
 import { LabelsTableCell } from "./LabelsTableCell";
-import { useQuery } from "@tanstack/react-query";
-import { productUpdatesQueries } from "@app/lib/queries";
-import semver from "semver";
 
 export type SiteRow = {
     id: number;
@@ -69,6 +67,8 @@ export type SiteRow = {
     orgId: string;
     type: "newt" | "wireguard" | "local";
     newtVersion?: string;
+    agent?: string;
+    agentVersion?: string;
     newtUpdateAvailable?: boolean;
     online?: boolean | null;
     address?: string;
@@ -90,6 +90,8 @@ type SitesTableProps = {
     rowCount: number;
 };
 
+const SITE_STATUS_HISTORY_DAYS = 30;
+
 export default function SitesTable({
     sites,
     orgId,
@@ -107,13 +109,22 @@ export default function SitesTable({
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [deleteWithResources, setDeleteWithResources] = useState(false);
     const [selectedSite, setSelectedSite] = useState<SiteRow | null>(null);
+    const [restartingSite, setRestartingSite] = useState<SiteRow | null>(null);
     const [resourcesDialogSite, setResourcesDialogSite] =
         useState<SiteRow | null>(null);
     const [isRefreshing, startTransition] = useTransition();
     const [isNavigatingToAddPage, startNavigation] = useTransition();
 
-    const { isPaidUser } = usePaidStatus();
-    const isLabelFeatureEnabled = isPaidUser(tierMatrix.labels);
+    const siteIds = useMemo(() => sites.map((s) => s.id), [sites]);
+
+    const statusHistoryQuery = useQuery({
+        ...orgQueries.batchedSiteStatusHistory({
+            orgId,
+            siteIds,
+            days: SITE_STATUS_HISTORY_DAYS
+        }),
+        enabled: siteIds.length > 0
+    });
 
     const api = createApiClient(useEnvContext());
     const t = useTranslations();
@@ -157,6 +168,27 @@ export default function SitesTable({
                 });
             }
         });
+    }
+
+    async function restartSite(siteId: number) {
+        try {
+            await api.post(`/site/${siteId}/restart`);
+            toast({
+                title: t("siteRestarted"),
+                description: t("siteRestartedDescription")
+            });
+        } catch (e) {
+            toast({
+                variant: "destructive",
+                title: t("siteErrorRestart"),
+                description: formatAxiosError(
+                    e,
+                    t("siteErrorRestartDescription")
+                )
+            });
+        } finally {
+            setRestartingSite(null);
+        }
     }
 
     function deleteSite(siteId: number, withResources: boolean) {
@@ -276,7 +308,14 @@ export default function SitesTable({
                     if (originalRow.type == "local") {
                         return <span>-</span>;
                     }
-                    return <UptimeMiniBar siteId={originalRow.id} days={30} />;
+                    const data = statusHistoryQuery.data?.[row.original.id];
+                    return (
+                        <UptimeMiniBar
+                            isLoading={statusHistoryQuery.isLoading}
+                            data={data}
+                            days={SITE_STATUS_HISTORY_DAYS}
+                        />
+                    );
                 }
             },
             {
@@ -332,28 +371,42 @@ export default function SitesTable({
             },
             {
                 accessorKey: "type",
-                friendlyName: t("type"),
+                friendlyName: t("agent"),
                 header: () => {
-                    return <span className="p-3">{t("type")}</span>;
+                    return <span className="p-3">{t("agent")}</span>;
                 },
                 cell: ({ row }) => {
                     const originalRow = row.original;
 
-                    let updateAvailable =
+                    const updateAvailable = Boolean(
                         latestNewtVersion &&
                         originalRow.newtVersion &&
-                        semver.lt(originalRow.newtVersion, latestNewtVersion);
+                        semver.valid(originalRow.newtVersion) &&
+                        semver.lt(originalRow.newtVersion, latestNewtVersion)
+                    );
 
                     if (originalRow.type === "newt") {
+                        if (!originalRow.agent && !originalRow.newtVersion) {
+                            // it has not checked in yet
+                            return <span>-</span>;
+                        }
+                        // agent and agentVersion were added after newtVersion, so a
+                        // site still running an older Newt reports only newtVersion.
+                        // Without these fallbacks the badge renders with no label and
+                        // no version at all.
+                        const agentLabel =
+                            originalRow.agent == "cli"
+                                ? "Pangolin CLI"
+                                : "Newt";
+                        const agentVersion =
+                            originalRow.agentVersion ?? originalRow.newtVersion;
                         return (
                             <div className="flex items-center space-x-1">
                                 <Badge variant="secondary">
                                     <div className="flex items-center space-x-1">
-                                        <span>Newt</span>
-                                        {originalRow.newtVersion && (
-                                            <span>
-                                                v{originalRow.newtVersion}
-                                            </span>
+                                        <span>{agentLabel}</span>
+                                        {agentVersion && (
+                                            <span>v{agentVersion}</span>
                                         )}
                                     </div>
                                 </Badge>
@@ -430,7 +483,8 @@ export default function SitesTable({
                             "saturn",
                             "uranus",
                             "neptune",
-                            "pluto"
+                            "pluto",
+                            "erid"
                         ].includes(originalRow.exitNodeName.toLowerCase());
 
                     if (isCloudNode) {
@@ -477,6 +531,23 @@ export default function SitesTable({
                         "-"
                     );
                 }
+            },
+            {
+                accessorKey: "labels",
+                header: () => (
+                    <LabelColumnFilterButton
+                        orgId={orgId}
+                        selectedValues={searchParams.getAll("labels")}
+                        onSelectedValuesChange={(value) =>
+                            handleFilterChange("labels", value)
+                        }
+                        label={t("labels")}
+                        className="p-3"
+                    />
+                ),
+                cell: ({ row }: { row: { original: SiteRow } }) => (
+                    <SiteLabelCell site={row.original} orgId={orgId} />
+                )
             },
             {
                 id: "actions",
@@ -526,6 +597,18 @@ export default function SitesTable({
                                         </DropdownMenuItem>
                                     </Link>
                                     <DropdownMenuSeparator />
+                                    {siteRow.type === "newt" && (
+                                        <>
+                                            <DropdownMenuItem
+                                                onClick={() =>
+                                                    setRestartingSite(siteRow)
+                                                }
+                                            >
+                                                {t("siteRestartButton")}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
+                                        </>
+                                    )}
                                     <DropdownMenuItem
                                         onClick={() => {
                                             setSelectedSite(siteRow);
@@ -568,28 +651,15 @@ export default function SitesTable({
             }
         ];
 
-        if (isLabelFeatureEnabled) {
-            cols.splice(cols.length - 1, 0, {
-                accessorKey: "labels",
-                header: () => (
-                    <LabelColumnFilterButton
-                        orgId={orgId}
-                        selectedValues={searchParams.getAll("labels")}
-                        onSelectedValuesChange={(value) =>
-                            handleFilterChange("labels", value)
-                        }
-                        label={t("labels")}
-                        className="p-3"
-                    />
-                ),
-                cell: ({ row }: { row: { original: SiteRow } }) => (
-                    <SiteLabelCell site={row.original} orgId={orgId} />
-                )
-            });
-        }
-
         return cols;
-    }, [isLabelFeatureEnabled, orgId, t, searchParams, latestNewtVersion]);
+    }, [
+        orgId,
+        t,
+        searchParams,
+        latestNewtVersion,
+        statusHistoryQuery.data,
+        statusHistoryQuery.isLoading
+    ]);
 
     function toggleSort(column: string) {
         const newSearch = getNextSortOrder(column, searchParams);
@@ -653,6 +723,28 @@ export default function SitesTable({
                     </CredenzaFooter>
                 </CredenzaContent>
             </Credenza>
+
+            {restartingSite && (
+                <ConfirmDeleteDialog
+                    open={Boolean(restartingSite)}
+                    setOpen={(val) => {
+                        if (!val) setRestartingSite(null);
+                    }}
+                    dialog={
+                        <p>
+                            {t.rich("siteRestartDialogMessage", {
+                                name: restartingSite.name,
+                                b: (chunks) => <b>{chunks}</b>
+                            })}
+                        </p>
+                    }
+                    buttonText={t("siteRestartButton")}
+                    onConfirm={() => restartSite(restartingSite.id)}
+                    string={restartingSite.name}
+                    warningText={t("siteRestartWarning")}
+                    title={t("siteRestartTitle")}
+                />
+            )}
 
             {selectedSite && (
                 <ConfirmDeleteDialog

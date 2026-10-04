@@ -8,7 +8,10 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { eq, and } from "drizzle-orm";
 import { OpenAPITags, registry } from "@server/openApi";
-import { rebuildClientAssociationsFromSiteResource } from "@server/lib/rebuildClientAssociations";
+import {
+    rebuildClientAssociationsFromSiteResource,
+    isOrgRebuildRateLimited
+} from "@server/lib/rebuildClientAssociations";
 
 const removeClientFromSiteResourceBodySchema = z
     .object({
@@ -28,6 +31,40 @@ const removeClientFromSiteResourceParamsSchema = z
 registry.registerPath({
     method: "post",
     path: "/site-resource/{siteResourceId}/clients/remove",
+    description:
+        "Remove a single client from a site resource. Clients with a userId cannot be removed.",
+    tags: [OpenAPITags.PrivateResourceLegacy],
+    request: {
+        params: removeClientFromSiteResourceParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: removeClientFromSiteResourceBodySchema
+                }
+            }
+        }
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "post",
+    path: "/private-resource/{resourceId}/clients/remove",
     description:
         "Remove a single client from a site resource. Clients with a userId cannot be removed.",
     tags: [OpenAPITags.PrivateResource, OpenAPITags.Client],
@@ -106,6 +143,14 @@ export async function removeClientFromSiteResource(
             );
         }
 
+        if (await isOrgRebuildRateLimited(siteResource.orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
+                )
+            );
+        }
         // Check if client exists and has a userId
         const [client] = await db
             .select()

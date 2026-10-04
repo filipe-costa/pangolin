@@ -6,16 +6,20 @@ import {
     buildClientConfigurationForNewtClient,
     buildTargetConfigurationForNewtClient
 } from "./buildConfiguration";
-import { canCompress } from "@server/lib/clientVersionChecks";
+import {
+    canCompress,
+    supportsCertReferences
+} from "@server/lib/clientVersionChecks";
+import { dedupeCertsForTargets } from "@server/lib/ip";
 
 export async function sendNewtSyncMessage(newt: Newt, site: Site) {
     const {
         tcpTargets,
         udpTargets,
         validHealthCheckTargets,
-        browserGatewayTargets
+        browserGatewayTargets,
+        remoteExitNodeSubnets
     } = await buildTargetConfigurationForNewtClient(site.siteId);
-
     let exitNode: ExitNode | undefined;
     if (site.exitNodeId) {
         [exitNode] = await db
@@ -29,6 +33,15 @@ export async function sendNewtSyncMessage(newt: Newt, site: Site) {
         exitNode
     );
 
+    // Older newt clients only understand inline tlsCert/tlsKey on each
+    // target, so only switch to certId references once we know the client
+    // can resolve them.
+    let clientTargets = targets;
+    let certs: { id: string; cert: string; key: string }[] = [];
+    if (supportsCertReferences(newt.version)) {
+        ({ targets: clientTargets, certs } = dedupeCertsForTargets(targets));
+    }
+
     await sendToClient(
         newt.newtId,
         {
@@ -40,8 +53,10 @@ export async function sendNewtSyncMessage(newt: Newt, site: Site) {
                 },
                 healthCheckTargets: validHealthCheckTargets,
                 peers: peers,
-                clientTargets: targets,
-                browserGatewayTargets: browserGatewayTargets
+                clientTargets: clientTargets,
+                certs: certs,
+                browserGatewayTargets: browserGatewayTargets,
+                remoteExitNodeSubnets: remoteExitNodeSubnets
             }
         },
         {

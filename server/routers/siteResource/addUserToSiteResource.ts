@@ -9,7 +9,10 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { eq, and } from "drizzle-orm";
 import { OpenAPITags, registry } from "@server/openApi";
-import { rebuildClientAssociationsFromSiteResource } from "@server/lib/rebuildClientAssociations";
+import {
+    rebuildClientAssociationsFromSiteResource,
+    isOrgRebuildRateLimited
+} from "@server/lib/rebuildClientAssociations";
 
 const addUserToSiteResourceBodySchema = z
     .object({
@@ -29,6 +32,39 @@ const addUserToSiteResourceParamsSchema = z
 registry.registerPath({
     method: "post",
     path: "/site-resource/{siteResourceId}/users/add",
+    description: "Add a single user to a site resource.",
+    tags: [OpenAPITags.PrivateResourceLegacy],
+    request: {
+        params: addUserToSiteResourceParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: addUserToSiteResourceBodySchema
+                }
+            }
+        }
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "post",
+    path: "/private-resource/{resourceId}/users/add",
     description: "Add a single user to a site resource.",
     tags: [OpenAPITags.PrivateResource, OpenAPITags.User],
     request: {
@@ -101,6 +137,15 @@ export async function addUserToSiteResource(
         if (!siteResource) {
             return next(
                 createHttpError(HttpCode.NOT_FOUND, "Site resource not found")
+            );
+        }
+
+        if (await isOrgRebuildRateLimited(siteResource.orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
+                )
             );
         }
 

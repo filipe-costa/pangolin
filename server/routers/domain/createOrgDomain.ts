@@ -17,10 +17,11 @@ import { subdomainSchema } from "@server/lib/schemas";
 import { generateId } from "@server/auth/sessions/app";
 import { eq, and } from "drizzle-orm";
 import { usageService } from "@server/lib/billing/usageService";
-import { FeatureId } from "@server/lib/billing";
+import { LimitId } from "@server/lib/billing";
 import { isSecondLevelDomain, isValidDomain } from "@server/lib/validators";
 import { build } from "@server/build";
 import config from "@server/lib/config";
+import { createNs, createCname } from "#dynamic/lib/dns/generateDomains";
 
 const paramsSchema = z.strictObject({
     orgId: z.string()
@@ -120,7 +121,7 @@ export async function createOrgDomain(
         }
 
         if (build == "saas") {
-            const usage = await usageService.getUsage(orgId, FeatureId.DOMAINS);
+            const usage = await usageService.getUsage(orgId, LimitId.DOMAINS);
             if (!usage) {
                 return next(
                     createHttpError(
@@ -132,7 +133,7 @@ export async function createOrgDomain(
             const rejectDomains = await usageService.checkLimitSet(
                 orgId,
 
-                FeatureId.DOMAINS,
+                LimitId.DOMAINS,
                 {
                     ...usage,
                     instantaneousValue: (usage.instantaneousValue || 0) + 1
@@ -283,8 +284,7 @@ export async function createOrgDomain(
 
             // TODO: This needs to be cross region and not hardcoded
             if (type === "ns") {
-                nsRecords = config.getRawConfig().dns.nameservers as string[];
-
+                nsRecords = createNs();
                 // Save NS records to database
                 for (const nsValue of nsRecords) {
                     recordsToInsert.push({
@@ -296,16 +296,7 @@ export async function createOrgDomain(
                     });
                 }
             } else if (type === "cname") {
-                cnameRecords = [
-                    {
-                        value: `${domainId}.${config.getRawConfig().dns.cname_extension}`,
-                        baseDomain: baseDomain
-                    },
-                    {
-                        value: `_acme-challenge.${domainId}.${config.getRawConfig().dns.cname_extension}`,
-                        baseDomain: `_acme-challenge.${baseDomain}`
-                    }
-                ];
+                cnameRecords = createCname(domainId, baseDomain);
 
                 // Save CNAME records to database
                 for (const cnameRecord of cnameRecords) {
@@ -346,7 +337,7 @@ export async function createOrgDomain(
                 await trx.insert(dnsRecords).values(recordsToInsert);
             }
 
-            await usageService.add(orgId, FeatureId.DOMAINS, 1, trx);
+            await usageService.add(orgId, LimitId.DOMAINS, 1, trx);
         });
 
         if (!returned) {

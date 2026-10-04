@@ -27,11 +27,18 @@ import { CheckOrgUserAccessResponse } from "@server/routers/org";
 import OrgPolicyRequired from "@app/components/OrgPolicyRequired";
 import { isOrgSubscribed } from "@app/lib/api/isOrgSubscribed";
 import { normalizePostAuthPath } from "@server/lib/normalizePostAuthPath";
+import { tierMatrix } from "@server/lib/billing/tierMatrix";
 import type { Metadata } from "next";
 
-export const metadata: Metadata = {
-    title: "Resource Access"
-};
+export async function generateMetadata(): Promise<Metadata> {
+    const env = pullEnv();
+    const title =
+        env.branding.resourceAuthPage?.titleText ||
+        env.branding.appName ||
+        "Resource Access";
+
+    return { title };
+}
 
 export const dynamic = "force-dynamic";
 
@@ -70,14 +77,28 @@ export default async function ResourceAuthPage(props: {
         );
     }
 
-    const subscribed = await isOrgSubscribed(authInfo.orgId);
+    const isInference = authInfo.mode === "inference";
+    const keysPath = `/${authInfo.orgId}/resource/${authInfo.resourceGuid}/keys`;
+
+    const hasLoginPageDomain = await isOrgSubscribed(
+        authInfo.orgId,
+        tierMatrix.loginPageDomain
+    );
+    const hasOrgOidc = await isOrgSubscribed(
+        authInfo.orgId,
+        tierMatrix.orgOidc
+    );
+    const hasLoginPageBranding = await isOrgSubscribed(
+        authInfo.orgId,
+        tierMatrix.loginPageBranding
+    );
 
     const allHeaders = await headers();
     const host = allHeaders.get("host");
 
     const expectedHost = env.app.dashboardUrl.split("//")[1];
     if (host !== expectedHost) {
-        if (build === "saas" && !subscribed) {
+        if (build === "saas" && !hasLoginPageDomain) {
             redirect(env.app.dashboardUrl);
         }
 
@@ -101,25 +122,39 @@ export default async function ResourceAuthPage(props: {
 
     if (searchParams.redirect) {
         try {
+            const redirectTarget = new URL(searchParams.redirect);
             const serverResourceHost = new URL(authInfo.url).host;
-            const redirectHost = new URL(searchParams.redirect).host;
-            const redirectPort = new URL(searchParams.redirect).port;
+            const redirectHost = redirectTarget.host;
+            const redirectPort = redirectTarget.port;
             const serverResourceHostWithPort = `${serverResourceHost}:${redirectPort}`;
 
-            const wildcardMatchesRedirect = (wildcardDomain: string, host: string): boolean => {
+            // URL parses a host out of any scheme that uses "//", so a target
+            // like javascript://resource-host/... matches the comparisons
+            // below. The target is later assigned to window.location, so only
+            // http(s) is accepted here.
+            const isHttpTarget =
+                redirectTarget.protocol === "http:" ||
+                redirectTarget.protocol === "https:";
+
+            const wildcardMatchesRedirect = (
+                wildcardDomain: string,
+                host: string
+            ): boolean => {
                 if (!wildcardDomain.startsWith("*.")) return false;
                 const suffix = wildcardDomain.slice(1); // e.g. ".wildcard.owen.fosrl.io"
                 return host.endsWith(suffix) && host.length > suffix.length;
             };
 
-            if (serverResourceHost === redirectHost) {
-                redirectUrl = searchParams.redirect;
-            } else if (serverResourceHostWithPort === redirectHost) {
-                redirectUrl = searchParams.redirect;
-            } else if (
-                authInfo.wildcard &&
-                authInfo.fullDomain &&
-                wildcardMatchesRedirect(authInfo.fullDomain, redirectHost)
+            if (
+                isHttpTarget &&
+                (serverResourceHost === redirectHost ||
+                    serverResourceHostWithPort === redirectHost ||
+                    (authInfo.wildcard &&
+                        authInfo.fullDomain &&
+                        wildcardMatchesRedirect(
+                            authInfo.fullDomain,
+                            redirectHost
+                        )))
             ) {
                 redirectUrl = searchParams.redirect;
             }
@@ -144,7 +179,9 @@ export default async function ResourceAuthPage(props: {
 
     if (user && !user.emailVerified && env.flags.emailVerificationRequired) {
         redirect(
-            `/auth/verify-email?redirect=/auth/resource/${authInfo.resourceGuid}`
+            `/auth/verify-email?redirect=${encodeURIComponent(
+                `/auth/resource/${authInfo.resourceGuid}`
+            )}`
         );
     }
 
@@ -166,15 +203,31 @@ export default async function ResourceAuthPage(props: {
 
     // If user is not compliant with org policies, show policy requirements
     if (orgPolicyCheck && !orgPolicyCheck.allowed && orgPolicyCheck.policies) {
+        const resourceAuthPageUrl = `/auth/resource/${authInfo.resourceGuid}${redirectUrl !== authInfo.url ? `?redirect=${encodeURIComponent(redirectUrl)}` : ""}`;
         return (
             <div className="w-full max-w-md">
                 <OrgPolicyRequired
                     orgId={authInfo.orgId}
                     policies={orgPolicyCheck.policies}
+                    redirectAfterAuth={resourceAuthPageUrl}
                 />
             </div>
         );
     }
+
+    // Inference resources never establish a resource session on the inference
+    // host. Authenticated users retrieve their virtual API key on the dashboard.
+    if (isInference && user) {
+        if (host !== expectedHost) {
+            redirect(`/auth/org?redirect=${encodeURIComponent(keysPath)}`);
+        } else {
+            redirect(keysPath);
+        }
+    }
+
+    // After password/pincode/SSO, do not send the browser back to the
+    // inference host (session alone cannot pass Badger). Land on keys instead.
+    const postAuthRedirect = isInference ? keysPath : redirectUrl;
 
     if (!hasAuth) {
         // no authentication so always go straight to the resource
@@ -216,17 +269,14 @@ export default async function ResourceAuthPage(props: {
     if (searchParams.token) {
         return (
             <div className="w-full max-w-md">
-                <AccessToken
-                    token={searchParams.token}
-                    resourceId={authInfo.resourceId}
-                />
+                <AccessToken token={searchParams.token} />
             </div>
         );
     }
 
     let loginIdps: LoginFormIDP[] = [];
     if (build === "saas" || env.app.identityProviderMode === "org") {
-        if (subscribed) {
+        if (hasOrgOidc) {
             const idpsRes = await cache(
                 async () =>
                     await priv.get<AxiosResponse<ListOrgIdpsResponse>>(
@@ -244,7 +294,7 @@ export default async function ResourceAuthPage(props: {
         loginIdps = idpsRes.data.data.idps.map((idp) => ({
             idpId: idp.idpId,
             name: idp.name,
-            variant: idp.type
+            variant: idp.variant ?? idp.type
         })) as LoginFormIDP[];
     }
 
@@ -260,7 +310,7 @@ export default async function ResourceAuthPage(props: {
                 <AutoLoginHandler
                     resourceId={authInfo.resourceId}
                     skipToIdpId={authInfo.skipToIdpId}
-                    redirectUrl={redirectUrl}
+                    redirectUrl={postAuthRedirect}
                     orgId={build === "saas" ? authInfo.orgId : undefined}
                 />
             );
@@ -269,7 +319,7 @@ export default async function ResourceAuthPage(props: {
 
     let branding: LoadLoginPageBrandingResponse | null = null;
     try {
-        if (subscribed) {
+        if (hasLoginPageBranding) {
             const res = await priv.get<
                 AxiosResponse<LoadLoginPageBrandingResponse>
             >(`/login-page-branding?orgId=${authInfo.orgId}`);
@@ -298,7 +348,7 @@ export default async function ResourceAuthPage(props: {
                             name: authInfo.resourceName,
                             id: authInfo.resourceId
                         }}
-                        redirect={redirectUrl}
+                        redirect={postAuthRedirect}
                         idps={loginIdps}
                         orgId={build === "saas" ? authInfo.orgId : undefined}
                         branding={

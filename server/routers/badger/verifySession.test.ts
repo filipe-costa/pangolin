@@ -236,6 +236,38 @@ function runTests() {
         "Root path should not match non-root path"
     );
 
+    // Path traversal / encoded-slash bypass regression tests
+    assertEquals(
+        isPathAllowed("public/*", "public/../admin"),
+        false,
+        "Literal .. traversal out of an allowed prefix must not match"
+    );
+    assertEquals(
+        isPathAllowed("public/*", "public%2F..%2Fadmin"),
+        false,
+        "Encoded-slash traversal out of an allowed prefix must not match"
+    );
+    assertEquals(
+        isPathAllowed("public/*", "public%2f..%2fadmin%2ffile"),
+        false,
+        "Encoded-slash traversal is case-insensitively decoded before matching"
+    );
+    assertEquals(
+        isPathAllowed("admin/*", "public/../admin/secret"),
+        true,
+        ".. traversal INTO a restricted path should still be caught by its own rule"
+    );
+    assertEquals(
+        isPathAllowed("public/*", "public%2Ffoo"),
+        true,
+        "Encoded slash without traversal should still resolve and match normally"
+    );
+    assertEquals(
+        isPathAllowed("public/*", "public/./foo"),
+        true,
+        "Single-dot segments are a no-op and should not affect matching"
+    );
+
     console.log("All path matching tests passed!");
 }
 
@@ -354,6 +386,38 @@ function runSpecialCharacterTests() {
     console.log("All special character tests passed!");
 }
 
+function runEncodedPatternTests() {
+    console.log("\nRunning percent-encoded pattern tests...");
+
+    // isValidUrlGlobPattern accepts percent-encoded sequences and rejects
+    // raw spaces / non-ASCII, so `%20` and `%C3%A9` are the only way to write
+    // a PATH rule for such a path. Badger sends the request path already
+    // decoded (Go's req.URL.Path), and isPathAllowed decodes it again, so the
+    // rule pattern must be decoded the same way or it can never match.
+    assertEquals(
+        isPathAllowed("/my%20docs/*", "/my docs/report.pdf"),
+        true,
+        "Percent-encoded space in pattern should match decoded request path"
+    );
+    assertEquals(
+        isPathAllowed("/my%20docs/*", "/my%20docs/report.pdf"),
+        true,
+        "Percent-encoded space in pattern should match raw-encoded request path"
+    );
+    assertEquals(
+        isPathAllowed("/caf%C3%A9", "/café"),
+        true,
+        "Percent-encoded UTF-8 in pattern should match decoded request path"
+    );
+    assertEquals(
+        isPathAllowed("/my%20docs/*", "/my-docs/report.pdf"),
+        false,
+        "Decoded pattern must still reject a different path"
+    );
+
+    console.log("All percent-encoded pattern tests passed!");
+}
+
 function runRegionTests() {
     console.log("\nRunning isIpInRegion tests...");
 
@@ -414,6 +478,7 @@ function runRegionTests() {
 try {
     runTests();
     runSpecialCharacterTests();
+    runEncodedPatternTests();
     runRegionTests();
     console.log("\n✅ All tests passed!");
 } catch (error) {

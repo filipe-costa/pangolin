@@ -1,4 +1,4 @@
-import { orgQueries } from "@app/lib/queries";
+import { launcherQueries, orgQueries } from "@app/lib/queries";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
@@ -12,17 +12,20 @@ import {
 import { Checkbox } from "./ui/checkbox";
 import { useTranslations } from "next-intl";
 import { useDebounce } from "use-debounce";
-import { SiteOnlineStatus, type Selectedsite } from "./site-selector";
+import { SiteOnlineStatus, type SelectedSite } from "./site-selector";
 
 export type MultiSitesSelectorProps = {
     orgId: string;
-    selectedSites: Selectedsite[];
-    onSelectionChange: (sites: Selectedsite[]) => void;
+    selectedSites: SelectedSite[];
+    onSelectionChange: (sites: SelectedSite[]) => void;
     filterTypes?: string[];
+    scope?: "org" | "launcher";
+    onClear?: () => void;
+    showClear?: boolean;
 };
 
 export function formatMultiSitesSelectorLabel(
-    selectedSites: Selectedsite[],
+    selectedSites: SelectedSite[],
     t: (key: string, values?: { count: number }) => string
 ): string {
     if (selectedSites.length === 0) {
@@ -40,19 +43,35 @@ export function MultiSitesSelector({
     orgId,
     selectedSites,
     onSelectionChange,
-    filterTypes
+    filterTypes,
+    scope = "org",
+    onClear,
+    showClear = false
 }: MultiSitesSelectorProps) {
     const t = useTranslations();
     const [siteSearchQuery, setSiteSearchQuery] = useState("");
     const [debouncedQuery] = useDebounce(siteSearchQuery, 150);
 
-    const { data: sites = [] } = useQuery(
-        orgQueries.sites({
+    const orgSitesQuery = useQuery({
+        ...orgQueries.sites({
             orgId,
             query: debouncedQuery,
             perPage: 10
-        })
-    );
+        }),
+        enabled: scope === "org"
+    });
+    const launcherSitesQuery = useQuery({
+        ...launcherQueries.sites({
+            orgId,
+            query: debouncedQuery,
+            perPage: 20
+        }),
+        enabled: scope === "launcher"
+    });
+    const sites =
+        scope === "launcher"
+            ? (launcherSitesQuery.data ?? [])
+            : (orgSitesQuery.data ?? []);
 
     const sitesShown = useMemo(() => {
         const base = filterTypes
@@ -72,7 +91,7 @@ export function MultiSitesSelector({
         [selectedSites]
     );
 
-    const toggleSite = (site: Selectedsite) => {
+    const toggleSite = (site: SelectedSite) => {
         if (selectedIds.has(site.siteId)) {
             onSelectionChange(
                 selectedSites.filter((s) => s.siteId !== site.siteId)
@@ -92,6 +111,14 @@ export function MultiSitesSelector({
             <CommandList>
                 <CommandEmpty>{t("siteNotFound")}</CommandEmpty>
                 <CommandGroup>
+                    {showClear && onClear && (
+                        <CommandItem
+                            onSelect={onClear}
+                            className="text-muted-foreground"
+                        >
+                            {t("accessFilterClear")}
+                        </CommandItem>
+                    )}
                     {sitesShown.map((site) => (
                         <CommandItem
                             key={site.siteId}

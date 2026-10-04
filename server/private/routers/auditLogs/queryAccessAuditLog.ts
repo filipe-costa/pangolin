@@ -22,7 +22,7 @@ import {
 import { registry } from "@server/openApi";
 import { NextFunction } from "express";
 import { Request, Response } from "express";
-import { eq, gt, lt, and, count, desc, inArray, isNull } from "drizzle-orm";
+import { eq, gt, lt, and, count, desc, inArray, isNull, or } from "drizzle-orm";
 import { OpenAPITags } from "@server/openApi";
 import { z } from "zod";
 import createHttpError from "http-errors";
@@ -54,7 +54,6 @@ export const queryAccessAuditLogsQuery = z.object({
             error: "timeEnd must be a valid ISO date string"
         })
         .transform((val) => Math.floor(new Date(val).getTime() / 1000))
-        .optional()
         .prefault(() => new Date().toISOString())
         .openapi({
             type: "string",
@@ -88,7 +87,27 @@ export const queryAccessAuditLogsQuery = z.object({
         .optional()
         .default("0")
         .transform(Number)
-        .pipe(z.int().nonnegative())
+        .pipe(z.int().nonnegative()),
+    ip: z
+        .preprocess((val) => {
+            if (val === undefined || val === null || val === "") {
+                return undefined;
+            }
+            if (Array.isArray(val)) {
+                return val;
+            }
+            // the array is returned as this
+            if (typeof val === "string") {
+                return val.split(",");
+            }
+            return undefined;
+        }, z.array(z.string()))
+        .optional()
+        .catch([])
+        .openapi({
+            type: "array",
+            description: "Filter by IP adresses"
+        })
 });
 
 export const queryAccessAuditLogsParams = z.object({
@@ -120,7 +139,10 @@ function getWhere(data: Q) {
         lt(accessAuditLog.timestamp, data.timeEnd),
         eq(accessAuditLog.orgId, data.orgId),
         data.resourceId
-            ? eq(accessAuditLog.resourceId, data.resourceId)
+            ? or(
+                  eq(accessAuditLog.resourceId, data.resourceId),
+                  eq(accessAuditLog.siteResourceId, data.resourceId)
+              )
             : undefined,
         data.actor ? eq(accessAuditLog.actor, data.actor) : undefined,
         data.actorType
@@ -131,6 +153,9 @@ function getWhere(data: Q) {
         data.type ? eq(accessAuditLog.type, data.type) : undefined,
         data.action !== undefined
             ? eq(accessAuditLog.action, data.action)
+            : undefined,
+        data.ip && data.ip.length > 0
+            ? inArray(accessAuditLog.ip, data.ip)
             : undefined
     );
 }
@@ -233,7 +258,6 @@ async function enrichWithResourceDetails(
             const details = siteResourceMap.get(log.siteResourceId);
             return {
                 ...log,
-                resourceId: log.siteResourceId,
                 resourceName: details?.name ?? null,
                 resourceNiceId: details?.niceId ?? null
             };

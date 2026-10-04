@@ -19,7 +19,7 @@ import { getNextAvailableClientSubnet, isIpInCidr } from "@server/lib/ip";
 import { verifyExitNodeOrgAccess } from "#dynamic/lib/exitNodes";
 import { build } from "@server/build";
 import { usageService } from "@server/lib/billing/usageService";
-import { FeatureId } from "@server/lib/billing";
+import { LimitId } from "@server/lib/billing";
 import { generateId } from "@server/auth/sessions/app";
 
 const createSiteParamsSchema = z.strictObject({
@@ -160,7 +160,7 @@ export async function createSite(
         }
 
         if (build == "saas") {
-            const usage = await usageService.getUsage(orgId, FeatureId.SITES);
+            const usage = await usageService.getUsage(orgId, LimitId.SITES);
             if (!usage) {
                 return next(
                     createHttpError(
@@ -172,7 +172,7 @@ export async function createSite(
             const rejectSites = await usageService.checkLimitSet(
                 orgId,
 
-                FeatureId.SITES,
+                LimitId.SITES,
                 {
                     ...usage,
                     instantaneousValue: (usage.instantaneousValue || 0) + 1
@@ -263,12 +263,16 @@ export async function createSite(
             const { value: newClientAddress, release } =
                 await getNextAvailableClientSubnet(orgId);
             releaseSubnetLock = release;
-            updatedAddress = newClientAddress.split("/")[0];
+            updatedAddress = `${newClientAddress.split("/")[0]}/${org.subnet ? org.subnet.split("/")[1] : "32"}`;
         }
 
         let newSite: Site | undefined;
         try {
-            if (subnet && exitNodeId) {
+            if (type === "wireguard" && subnet && exitNodeId) {
+                // Only wireguard sites actually persist the provided subnet/exitNodeId.
+                // Newt sites have their subnet/exit node chosen (under a lock) when the
+                // newt connects, so validating them here is both unnecessary and racy,
+                // since pickSiteDefaults does not lock the subnet it suggests.
                 //make sure the subnet is in the range of the exit node if provided
                 const [exitNode] = await db
                     .select()
@@ -307,13 +311,13 @@ export async function createSite(
                 // lets also make sure there is no overlap with other sites on the exit node
                 const sitesQuery = await db
                     .select({
-                        subnet: sites.subnet
+                        subnet: sites.exitNodeSubnet
                     })
                     .from(sites)
                     .where(
                         and(
                             eq(sites.exitNodeId, exitNodeId),
-                            eq(sites.subnet, subnet)
+                            eq(sites.exitNodeSubnet, subnet)
                         )
                     );
 
@@ -423,7 +427,7 @@ export async function createSite(
                             exitNodeId,
                             name,
                             niceId: updatedNiceId!,
-                            subnet,
+                            exitNodeSubnet: subnet,
                             type,
                             pubKey: pubKey || null,
                             status: "approved"
@@ -440,7 +444,7 @@ export async function createSite(
                             type,
                             dockerSocketEnabled: false,
                             online: true,
-                            subnet: "0.0.0.0/32",
+                            exitNodeSubnet: "0.0.0.0/32",
                             status: "approved"
                         })
                         .returning();
@@ -519,7 +523,7 @@ export async function createSite(
                     });
                 }
 
-                await usageService.add(orgId, FeatureId.SITES, 1, trx);
+                await usageService.add(orgId, LimitId.SITES, 1, trx);
             });
         } finally {
             await releaseSubnetLock?.();

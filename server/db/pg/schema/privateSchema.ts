@@ -2,6 +2,7 @@ import {
     pgTable,
     serial,
     varchar,
+    unique,
     boolean,
     integer,
     bigint,
@@ -19,32 +20,16 @@ import {
     roles,
     users,
     exitNodes,
-    sessions,
-    clients,
     resources,
     siteResources,
     targetHealthCheck,
-    sites
+    sites,
+    clients,
+    sessions,
+    labels,
+    aiProviders,
+    virtualApiKeys
 } from "./schema";
-
-export const certificates = pgTable("certificates", {
-    certId: serial("certId").primaryKey(),
-    domain: varchar("domain", { length: 255 }).notNull().unique(),
-    domainId: varchar("domainId").references(() => domains.domainId, {
-        onDelete: "cascade"
-    }),
-    wildcard: boolean("wildcard").default(false),
-    status: varchar("status", { length: 50 }).notNull().default("pending"), // pending, requested, valid, expired, failed
-    expiresAt: bigint("expiresAt", { mode: "number" }),
-    lastRenewalAttempt: bigint("lastRenewalAttempt", { mode: "number" }),
-    createdAt: bigint("createdAt", { mode: "number" }).notNull(),
-    updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
-    orderId: varchar("orderId", { length: 500 }),
-    errorMessage: text("errorMessage"),
-    renewalCount: integer("renewalCount").default(0),
-    certFile: text("certFile"),
-    keyFile: text("keyFile")
-});
 
 export const dnsChallenge = pgTable("dnsChallenges", {
     dnsChallengeId: serial("dnsChallengeId").primaryKey(),
@@ -93,7 +78,8 @@ export const subscriptions = pgTable("subscriptions", {
     billingCycleAnchor: bigint("billingCycleAnchor", { mode: "number" }),
     expiresAt: bigint("expiresAt", { mode: "number" }),
     trial: boolean("trial").default(false),
-    type: varchar("type", { length: 50 }) // tier1, tier2, tier3, or license
+    type: varchar("type", { length: 50 }), // tier1, tier2, tier3, or license
+    override: boolean("override").default(false)
 });
 
 export const subscriptionItems = pgTable("subscriptionItems", {
@@ -196,6 +182,42 @@ export const remoteExitNodes = pgTable("remoteExitNode", {
         onDelete: "cascade"
     })
 });
+
+export const remoteExitNodeResources = pgTable("remoteExitNodeResources", {
+    remoteExitNodeResourceId: serial("remoteExitNodeResourceId").primaryKey(),
+    remoteExitNodeId: varchar("remoteExitNodeId")
+        .notNull()
+        .references(() => remoteExitNodes.remoteExitNodeId, {
+            onDelete: "cascade"
+        }),
+    destination: varchar("destination").notNull() // a cidr range
+});
+
+export const remoteExitNodePreferenceLabels = pgTable(
+    // this controls what sites are enforced to connect to this node
+    "remoteExitNodePreferenceLabels",
+    {
+        remoteExitNodePreferenceLabelId: serial(
+            "remoteExitNodePreferenceLabelId"
+        ).primaryKey(),
+        remoteExitNodeId: varchar("remoteExitNodeId")
+            .references(() => remoteExitNodes.remoteExitNodeId, {
+                onDelete: "cascade"
+            })
+            .notNull(),
+        labelId: integer("labelId")
+            .references(() => labels.labelId, {
+                onDelete: "cascade"
+            })
+            .notNull()
+    },
+    (t) => [
+        unique("remote_exit_node_preference_label_uniq").on(
+            t.remoteExitNodeId,
+            t.labelId
+        )
+    ]
+);
 
 export const remoteExitNodeSessions = pgTable("remoteExitNodeSession", {
     sessionId: varchar("id").primaryKey(),
@@ -448,6 +470,9 @@ export const eventStreamingDestinations = pgTable(
         sendRequestLogs: boolean("sendRequestLogs").notNull().default(false),
         sendActionLogs: boolean("sendActionLogs").notNull().default(false),
         sendAccessLogs: boolean("sendAccessLogs").notNull().default(false),
+        sendAISessionLogs: boolean("sendAISessionLogs")
+            .notNull()
+            .default(false),
         type: varchar("type", { length: 50 }).notNull(), // e.g. "http", "kafka", etc.
         config: text("config").notNull(), // JSON string with the configuration for the destination
         enabled: boolean("enabled").notNull().default(true),
@@ -591,10 +616,90 @@ export const trialNotifications = pgTable("trialNotifications", {
     sentAt: bigint("sentAt", { mode: "number" }).notNull()
 });
 
+// Logs the aggregated prompt + response for a single AI gateway request, for
+// session replay. One row per request (not per streaming chunk). `sessionId`
+// is a fresh random id per row for now - no cross-request correlation yet,
+// but the column exists so a future pass can link multiple rows into a real
+// multi-turn session.
+export const aiSessionLog = pgTable(
+    "aiSessionLog",
+    {
+        id: serial("id").primaryKey(),
+        sessionId: varchar("sessionId").notNull(),
+        orgId: varchar("orgId").references(() => orgs.orgId, {
+            onDelete: "cascade"
+        }),
+        providerId: integer("providerId").references(
+            () => aiProviders.providerId,
+            { onDelete: "set null" }
+        ),
+        capability: varchar("capability").notNull(),
+        resourceId: integer("resourceId").references(
+            () => resources.resourceId,
+            { onDelete: "set null" }
+        ),
+        siteResourceId: integer("siteResourceId").references(
+            () => siteResources.siteResourceId,
+            { onDelete: "set null" }
+        ),
+        userId: varchar("userId").references(() => users.userId, {
+            onDelete: "set null"
+        }),
+        virtualApiKeyId: varchar("virtualApiKeyId").references(
+            () => virtualApiKeys.virtualApiKeyId,
+            { onDelete: "set null" }
+        ),
+        requestedModel: varchar("requestedModel"),
+        isStream: boolean("isStream").notNull().default(false),
+        requestBody: text("requestBody"),
+        responseBody: text("responseBody"),
+        // Capability-agnostic message transcript (JSON-encoded
+        // NormalizedAiMessage[] from server/lib/aiMessageNormalization.ts),
+        // computed at write time so search/display never need per-capability
+        // parsing logic. Null when normalization couldn't recognize the
+        // shape - callers fall back to requestBody/responseBody.
+        normalizedRequest: text("normalizedRequest"),
+        normalizedResponse: text("normalizedResponse"),
+        // True if any of the request/response (raw or normalized) fields
+        // were cut short at AI_SESSION_LOG_MAX_BODY_CHARS before storage.
+        truncated: boolean("truncated").notNull().default(false),
+        statusCode: integer("statusCode"),
+        createdAt: bigint("createdAt", { mode: "number" }).notNull() // epoch seconds
+    },
+    (t) => [
+        index("idx_ai_session_log_org_created").on(t.orgId, t.createdAt),
+        index("idx_ai_session_log_org_provider_created").on(
+            t.orgId,
+            t.providerId,
+            t.createdAt
+        ),
+        index("idx_ai_session_log_org_resource_created").on(
+            t.orgId,
+            t.resourceId,
+            t.createdAt
+        ),
+        index("idx_ai_session_log_org_site_resource_created").on(
+            t.orgId,
+            t.siteResourceId,
+            t.createdAt
+        ),
+        index("idx_ai_session_log_org_user_created").on(
+            t.orgId,
+            t.userId,
+            t.createdAt
+        ),
+        index("idx_ai_session_log_org_virtual_api_key_created").on(
+            t.orgId,
+            t.virtualApiKeyId,
+            t.createdAt
+        ),
+        index("idx_ai_session_log_session").on(t.sessionId)
+    ]
+);
+
 export type Approval = InferSelectModel<typeof approvals>;
 export type Limit = InferSelectModel<typeof limits>;
 export type Account = InferSelectModel<typeof account>;
-export type Certificate = InferSelectModel<typeof certificates>;
 export type DnsChallenge = InferSelectModel<typeof dnsChallenge>;
 export type Customer = InferSelectModel<typeof customers>;
 export type Subscription = InferSelectModel<typeof subscriptions>;
@@ -638,3 +743,4 @@ export type AlertEmailRecipients = InferSelectModel<
 >;
 export type AlertWebhookActions = InferSelectModel<typeof alertWebhookActions>;
 export type TrialNotification = InferSelectModel<typeof trialNotifications>;
+export type AiSessionLog = InferSelectModel<typeof aiSessionLog>;

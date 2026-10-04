@@ -12,6 +12,8 @@ import {
     performDeleteSiteResource,
     runSiteResourceDeleteSideEffects
 } from "@server/lib/deleteSiteResource";
+import { LimitId } from "@server/lib/billing";
+import { usageService } from "@server/lib/billing/usageService";
 
 const deleteSiteResourceParamsSchema = z.strictObject({
     siteResourceId: z.coerce.number().int().positive()
@@ -24,6 +26,32 @@ export type DeleteSiteResourceResponse = {
 registry.registerPath({
     method: "delete",
     path: "/site-resource/{siteResourceId}",
+    description: "Delete a site resource.",
+    tags: [OpenAPITags.PrivateResourceLegacy],
+    request: {
+        params: deleteSiteResourceParamsSchema
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "delete",
+    path: "/private-resource/{siteResourceId}",
     description: "Delete a site resource.",
     tags: [OpenAPITags.PrivateResource],
     request: {
@@ -86,6 +114,14 @@ export async function deleteSiteResource(
                 siteResourceId,
                 trx
             );
+            if (removedSiteResource?.orgId) {
+                await usageService.add(
+                    removedSiteResource?.orgId,
+                    LimitId.PRIVATE_RESOURCES,
+                    -1,
+                    trx
+                );
+            }
         });
 
         if (!removedSiteResource) {

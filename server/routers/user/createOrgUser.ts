@@ -12,13 +12,15 @@ import { and, eq, inArray } from "drizzle-orm";
 import { idp, idpOidcConfig, roles, userOrgs, users } from "@server/db";
 import { generateId } from "@server/auth/sessions/app";
 import { usageService } from "@server/lib/billing/usageService";
-import { FeatureId } from "@server/lib/billing";
+import { LimitId } from "@server/lib/billing";
 import { build } from "@server/build";
 import { calculateUserClientsForOrgs } from "@server/lib/calculateUserClientsForOrgs";
 import { isSubscribed } from "#dynamic/lib/isSubscribed";
 import { TierFeature, tierMatrix } from "@server/lib/billing/tierMatrix";
 import { assignUserToOrg } from "@server/lib/userOrg";
 import { isLicensedOrSubscribed } from "#dynamic/lib/isLicencedOrSubscribed";
+import { isOrgRebuildRateLimited } from "@server/lib/rebuildClientAssociations";
+import { idpExistsForOrg } from "@server/lib/idp/idpExistsForOrg";
 
 const paramsSchema = z.strictObject({
     orgId: z.string().nonempty()
@@ -122,7 +124,7 @@ export async function createOrgUser(
         } = parsedBody.data;
 
         if (build == "saas") {
-            const usage = await usageService.getUsage(orgId, FeatureId.USERS);
+            const usage = await usageService.getUsage(orgId, LimitId.USERS);
             if (!usage) {
                 return next(
                     createHttpError(
@@ -134,7 +136,7 @@ export async function createOrgUser(
             const rejectUsers = await usageService.checkLimitSet(
                 orgId,
 
-                FeatureId.USERS,
+                LimitId.USERS,
                 {
                     ...usage,
                     instantaneousValue: (usage.instantaneousValue || 0) + 1
@@ -225,6 +227,25 @@ export async function createOrgUser(
                     createHttpError(
                         HttpCode.NOT_FOUND,
                         "Organization not found"
+                    )
+                );
+            }
+
+            if (await isOrgRebuildRateLimited(org.orgId)) {
+                return next(
+                    createHttpError(
+                        HttpCode.TOO_MANY_REQUESTS,
+                        "Too many concurrent rebuild operations for this organization. Please retry after a moment."
+                    )
+                );
+            }
+
+            const providerExists = await idpExistsForOrg(idpId, orgId);
+            if (!providerExists) {
+                return next(
+                    createHttpError(
+                        HttpCode.BAD_REQUEST,
+                        "Identity provider not found in this organization"
                     )
                 );
             }

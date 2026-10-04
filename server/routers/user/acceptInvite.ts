@@ -17,10 +17,12 @@ import { fromError } from "zod-validation-error";
 import { checkValidInvite } from "@server/auth/checkValidInvite";
 import { verifySession } from "@server/auth/sessions/verifySession";
 import { usageService } from "@server/lib/billing/usageService";
-import { FeatureId } from "@server/lib/billing";
+import { LimitId } from "@server/lib/billing";
 import { calculateUserClientsForOrgs } from "@server/lib/calculateUserClientsForOrgs";
 import { build } from "@server/build";
 import { assignUserToOrg } from "@server/lib/userOrg";
+import { isOrgRebuildRateLimited } from "@server/lib/rebuildClientAssociations";
+import { UserType } from "@server/types/UserTypes";
 
 const acceptInviteBodySchema = z.strictObject({
     token: z.string(),
@@ -65,12 +67,17 @@ export async function acceptInvite(
             );
         }
 
-        const existingUser = await db
+        const [existingInternalUser] = await db
             .select()
             .from(users)
-            .where(eq(users.email, existingInvite.email))
+            .where(
+                and(
+                    eq(users.email, existingInvite.email),
+                    eq(users.type, UserType.Internal)
+                )
+            )
             .limit(1);
-        if (!existingUser.length) {
+        if (!existingInternalUser) {
             return next(
                 createHttpError(
                     HttpCode.BAD_REQUEST,
@@ -79,9 +86,8 @@ export async function acceptInvite(
             );
         }
 
-        const { user, session } = await verifySession(req);
+        const { user } = await verifySession(req);
 
-        // at this point we know the user exists
         if (!user) {
             return next(
                 createHttpError(
@@ -91,7 +97,7 @@ export async function acceptInvite(
             );
         }
 
-        if (user && user.email !== existingInvite.email) {
+        if (user.email !== existingInvite.email) {
             return next(
                 createHttpError(
                     HttpCode.BAD_REQUEST,
@@ -100,10 +106,19 @@ export async function acceptInvite(
             );
         }
 
+        if (user.type !== UserType.Internal) {
+            return next(
+                createHttpError(
+                    HttpCode.BAD_REQUEST,
+                    "Invites can only be accepted by internal users."
+                )
+            );
+        }
+
         if (build == "saas") {
             const usage = await usageService.getUsage(
                 existingInvite.orgId,
-                FeatureId.USERS
+                LimitId.USERS
             );
             if (!usage) {
                 return next(
@@ -116,7 +131,7 @@ export async function acceptInvite(
             const rejectUsers = await usageService.checkLimitSet(
                 existingInvite.orgId,
 
-                FeatureId.USERS,
+                LimitId.USERS,
                 {
                     ...usage,
                     instantaneousValue: (usage.instantaneousValue || 0) + 1
@@ -143,6 +158,15 @@ export async function acceptInvite(
                 createHttpError(
                     HttpCode.BAD_REQUEST,
                     "Organization does not exist. Please contact an admin."
+                )
+            );
+        }
+
+        if (await isOrgRebuildRateLimited(org.orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
                 )
             );
         }
@@ -185,7 +209,7 @@ export async function acceptInvite(
             await assignUserToOrg(
                 org,
                 {
-                    userId: existingUser[0].userId,
+                    userId: user.userId,
                     orgId: existingInvite.orgId
                 },
                 inviteRoleIds,
@@ -198,13 +222,13 @@ export async function acceptInvite(
                 .where(eq(userInvites.inviteId, inviteId));
 
             logger.debug(
-                `User ${existingUser[0].userId} accepted invite to org ${existingInvite.orgId}`
+                `User ${user.userId} accepted invite to org ${existingInvite.orgId}`
             );
         });
 
-        calculateUserClientsForOrgs(existingUser[0].userId).catch((e) => {
+        calculateUserClientsForOrgs(user.userId).catch((e) => {
             logger.error(
-                `Failed to calculate user clients after accepting invite for user ${existingUser[0].userId}: ${e}`
+                `Failed to calculate user clients after accepting invite for user ${user.userId}: ${e}`
             );
         });
 

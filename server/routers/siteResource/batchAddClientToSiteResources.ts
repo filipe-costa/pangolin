@@ -15,7 +15,10 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { eq, and, inArray } from "drizzle-orm";
 import { OpenAPITags, registry } from "@server/openApi";
-import { rebuildClientAssociationsFromClient } from "@server/lib/rebuildClientAssociations";
+import {
+    rebuildClientAssociationsFromClient,
+    isOrgRebuildRateLimited
+} from "@server/lib/rebuildClientAssociations";
 
 const batchAddClientToSiteResourcesParamsSchema = z
     .object({
@@ -34,6 +37,39 @@ const batchAddClientToSiteResourcesBodySchema = z
 registry.registerPath({
     method: "post",
     path: "/client/{clientId}/site-resources",
+    description: "Add a machine client to multiple site resources at once.",
+    tags: [OpenAPITags.PrivateResourceLegacy],
+    request: {
+        params: batchAddClientToSiteResourcesParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: batchAddClientToSiteResourcesBodySchema
+                }
+            }
+        }
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "post",
+    path: "/client/{clientId}/private-resources",
     description: "Add a machine client to multiple site resources at once.",
     tags: [OpenAPITags.Client],
     request: {
@@ -183,6 +219,15 @@ export async function batchAddClientToSiteResources(
         if (!client) {
             return next(
                 createHttpError(HttpCode.NOT_FOUND, "Client not found")
+            );
+        }
+
+        if (await isOrgRebuildRateLimited(client.orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
+                )
             );
         }
 

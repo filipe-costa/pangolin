@@ -18,7 +18,7 @@ import { approvalQueries } from "@app/lib/queries";
 import { build } from "@server/build";
 import { useQuery } from "@tanstack/react-query";
 import { ListUserOrgsResponse } from "@server/routers/org";
-import { ArrowRight, ExternalLink, PanelRightOpen, Server } from "lucide-react";
+import { ExternalLink, PanelRightOpen } from "lucide-react";
 import { useTranslations } from "next-intl";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -152,45 +152,6 @@ export function LayoutSidebar({
             />
             <div className="flex-1 overflow-y-auto relative">
                 <div className="px-2 pt-3">
-                    {!isAdminPage && user.serverAdmin && (
-                        <div
-                            className={cn(
-                                "shrink-0",
-                                isSidebarCollapsed ? "mb-4" : "mb-1"
-                            )}
-                        >
-                            <Link
-                                href="/admin"
-                                className={cn(
-                                    "flex items-center transition-colors text-muted-foreground hover:text-foreground text-sm w-full hover:bg-sidebar-accent dark:hover:bg-sidebar-accent/50 rounded-md",
-                                    isSidebarCollapsed
-                                        ? "px-2 py-2 justify-center"
-                                        : "px-3 py-1.5"
-                                )}
-                                title={
-                                    isSidebarCollapsed
-                                        ? t("serverAdmin")
-                                        : undefined
-                                }
-                            >
-                                <span
-                                    className={cn(
-                                        "flex-shrink-0 w-5 h-5 flex items-center justify-center text-muted-foreground",
-                                        !isSidebarCollapsed && "mr-3"
-                                    )}
-                                >
-                                    <Server className="h-4 w-4" />
-                                </span>
-                                {!isSidebarCollapsed && (
-                                    <>
-                                        <span className="flex-1">
-                                            {t("serverAdmin")}
-                                        </span>
-                                    </>
-                                )}
-                            </Link>
-                        </div>
-                    )}
                     <SidebarNav
                         sections={navItems}
                         isCollapsed={isSidebarCollapsed}
@@ -229,8 +190,9 @@ export function LayoutSidebar({
 
             <div
                 className={cn(
-                    "pt-1 flex flex-col shrink-0 gap-2 w-full border-t border-border",
-                    isSidebarCollapsed && "pb-2"
+                    "pt-1 flex flex-col shrink-0 gap-2 w-full",
+                    !isSidebarCollapsed && "border-t border-border",
+                    isSidebarCollapsed && "pb-4"
                 )}
             >
                 {canShowProductUpdates ? (

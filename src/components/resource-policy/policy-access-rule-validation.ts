@@ -2,6 +2,7 @@ import { COUNTRIES } from "@server/db/countries";
 import { isValidRegionId } from "@server/db/regions";
 import {
     isValidCIDR,
+    isValidHttpMethodList,
     isValidIP,
     isValidUrlGlobPattern
 } from "@server/lib/validators";
@@ -17,8 +18,10 @@ export const POLICY_RULE_MATCH_TYPES = [
     "IP",
     "PATH",
     "COUNTRY",
+    "COUNTRY_IS_NOT",
     "ASN",
-    "REGION"
+    "REGION",
+    "METHOD"
 ] as const;
 
 export type PolicyRuleMatchType = (typeof POLICY_RULE_MATCH_TYPES)[number];
@@ -78,10 +81,15 @@ export function createPolicyRuleValueSchema(t: TranslateFn, match: string) {
                 message: t("rulesErrorInvalidRegionDescription")
             });
         case "COUNTRY":
+        case "COUNTRY_IS_NOT":
             return required.refine(
                 (value) => COUNTRIES.some((country) => country.code === value),
                 { message: t("rulesErrorInvalidCountryDescription") }
             );
+        case "METHOD":
+            return required.refine(isValidHttpMethodList, {
+                message: t("rulesErrorInvalidMethodDescription")
+            });
         case "ASN":
             return required.refine(
                 (value) => {

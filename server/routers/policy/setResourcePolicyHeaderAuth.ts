@@ -25,11 +25,70 @@ const setResourcePolicyHeaderAuthBodySchema = z.strictObject({
 });
 
 registry.registerPath({
-    method: "put",
+    method: "post",
     path: "/resource-policy/{resourcePolicyId}/header-auth",
     description:
         "Set or update the header authentication for a resource policy. If user and password is not provided, it will remove the header authentication.",
-    tags: [OpenAPITags.Policy],
+    tags: [OpenAPITags.PublicResourcePolicyLegacy],
+    request: {
+        params: setResourcePolicyHeaderAuthParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: setResourcePolicyHeaderAuthBodySchema
+                }
+            }
+        }
+    },
+    responses: {}
+});
+
+registry.registerPath({
+    method: "post",
+    path: "/public-resource-policy/{resourcePolicyId}/header-auth",
+    description:
+        "Set or update the header authentication for a resource policy. If user and password is not provided, it will remove the header authentication.",
+    tags: [OpenAPITags.PublicResourcePolicy],
+    request: {
+        params: setResourcePolicyHeaderAuthParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: setResourcePolicyHeaderAuthBodySchema
+                }
+            }
+        }
+    },
+    responses: {}
+});
+
+registry.registerPath({
+    method: "put",
+    path: "/resource-policy/{resourcePolicyId}/header-auth",
+    description:
+        "Set or update the header authentication for a resource policy. If user and password is not provided, it will remove the header authentication. Deprecated: use POST instead.",
+    deprecated: true,
+    tags: [OpenAPITags.PublicResourcePolicyLegacy],
+    request: {
+        params: setResourcePolicyHeaderAuthParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: setResourcePolicyHeaderAuthBodySchema
+                }
+            }
+        }
+    },
+    responses: {}
+});
+
+registry.registerPath({
+    method: "put",
+    path: "/public-resource-policy/{resourcePolicyId}/header-auth",
+    description:
+        "Set or update the header authentication for a resource policy. If user and password is not provided, it will remove the header authentication. Deprecated: use POST instead.",
+    deprecated: true,
+    tags: [OpenAPITags.PublicResourcePolicy],
     request: {
         params: setResourcePolicyHeaderAuthParamsSchema,
         body: {
@@ -76,6 +135,15 @@ export async function setResourcePolicyHeaderAuth(
         const { resourcePolicyId } = parsedParams.data;
         const { headerAuth } = parsedBody.data;
 
+        const headerAuthHash =
+            headerAuth !== null
+                ? await hashPassword(
+                      Buffer.from(
+                          `${headerAuth.user}:${headerAuth.password}`
+                      ).toString("base64")
+                  )
+                : null;
+
         await db.transaction(async (trx) => {
             await trx
                 .delete(resourcePolicyHeaderAuth)
@@ -86,13 +154,7 @@ export async function setResourcePolicyHeaderAuth(
                     )
                 );
 
-            if (headerAuth !== null) {
-                const headerAuthHash = await hashPassword(
-                    Buffer.from(
-                        `${headerAuth.user}:${headerAuth.password}`
-                    ).toString("base64")
-                );
-
+            if (headerAuth !== null && headerAuthHash !== null) {
                 await trx.insert(resourcePolicyHeaderAuth).values({
                     resourcePolicyId,
                     headerAuthHash,

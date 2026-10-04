@@ -8,7 +8,10 @@ import logger from "@server/logger";
 import { fromError } from "zod-validation-error";
 import { eq, and } from "drizzle-orm";
 import { OpenAPITags, registry } from "@server/openApi";
-import { rebuildClientAssociationsFromSiteResource } from "@server/lib/rebuildClientAssociations";
+import {
+    rebuildClientAssociationsFromSiteResource,
+    isOrgRebuildRateLimited
+} from "@server/lib/rebuildClientAssociations";
 
 const addClientToSiteResourceBodySchema = z
     .object({
@@ -28,6 +31,40 @@ const addClientToSiteResourceParamsSchema = z
 registry.registerPath({
     method: "post",
     path: "/site-resource/{siteResourceId}/clients/add",
+    description:
+        "Add a single client to a site resource. Clients with a userId cannot be added.",
+    tags: [OpenAPITags.PrivateResourceLegacy],
+    request: {
+        params: addClientToSiteResourceParamsSchema,
+        body: {
+            content: {
+                "application/json": {
+                    schema: addClientToSiteResourceBodySchema
+                }
+            }
+        }
+    },
+    responses: {
+        200: {
+            description: "Successful response",
+            content: {
+                "application/json": {
+                    schema: z.object({
+                        data: z.record(z.string(), z.any()).nullable(),
+                        success: z.boolean(),
+                        error: z.boolean(),
+                        message: z.string(),
+                        status: z.number()
+                    })
+                }
+            }
+        }
+    }
+});
+
+registry.registerPath({
+    method: "post",
+    path: "/private-resource/{resourceId}/clients/add",
     description:
         "Add a single client to a site resource. Clients with a userId cannot be added.",
     tags: [OpenAPITags.PrivateResource, OpenAPITags.Client],
@@ -124,6 +161,15 @@ export async function addClientToSiteResource(
                 createHttpError(
                     HttpCode.BAD_REQUEST,
                     "Cannot add clients that are associated with a user"
+                )
+            );
+        }
+
+        if (await isOrgRebuildRateLimited(siteResource.orgId)) {
+            return next(
+                createHttpError(
+                    HttpCode.TOO_MANY_REQUESTS,
+                    "Too many concurrent rebuild operations for this organization. Please retry after a moment."
                 )
             );
         }
