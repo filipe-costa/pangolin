@@ -51,6 +51,9 @@ import m44 from "./scriptsSqlite/1.21.0";
 import m45 from "./scriptsSqlite/1.22.0";
 import m46 from "./scriptsSqlite/1.23.0";
 import m47 from "./scriptsSqlite/1.24.0";
+import m48 from "./scriptsSqlite/1.25.0";
+import m49 from "./scriptsSqlite/1.25.3";
+import m50 from "./scriptsSqlite/1.26.0";
 
 // THIS CANNOT IMPORT ANYTHING FROM THE SERVER
 // EXCEPT FOR THE DATABASE AND THE SCHEMA
@@ -98,7 +101,10 @@ const migrations = [
     { version: "1.21.0", run: m44 },
     { version: "1.22.0", run: m45 },
     { version: "1.23.0", run: m46 },
-    { version: "1.24.0", run: m47 }
+    { version: "1.24.0", run: m47 },
+    { version: "1.25.0", run: m48 },
+    { version: "1.25.3", run: m49 },
+    { version: "1.26.0", run: m50 }
     // Add new migrations here as they are created
 ] as const;
 

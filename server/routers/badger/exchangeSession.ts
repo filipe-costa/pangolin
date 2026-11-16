@@ -4,9 +4,15 @@ import createHttpError from "http-errors";
 import { z } from "zod";
 import { fromError } from "zod-validation-error";
 import logger from "@server/logger";
-import { resourceAccessToken, resources, sessions } from "@server/db";
+import {
+    resourceAccessToken,
+    resourceSessions,
+    resources,
+    sessions
+} from "@server/db";
 import { db } from "@server/db";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { resourceHostCondition } from "@server/db/queries/verifySessionQueries";
 import {
     createResourceSession,
     serializeResourceSessionCookie,
@@ -20,6 +26,7 @@ import { SESSION_COOKIE_EXPIRES as RESOURCE_SESSION_COOKIE_EXPIRES } from "@serv
 import config from "@server/lib/config";
 import { response } from "@server/lib/response";
 import { stripPortFromHost } from "@server/lib/ip";
+import { pickResourceForHost } from "@server/lib/traefik/rule";
 
 const exchangeSessionBodySchema = z.object({
     requestToken: z.string(),
@@ -65,31 +72,16 @@ export async function exchangeSession(
 
         const clientIp = requestIp ? stripPortFromHost(requestIp) : undefined;
 
-        const parts = cleanHost.split(".");
-        const wildcardCandidates: string[] = [];
-        for (let i = 1; i < parts.length; i++) {
-            wildcardCandidates.push(`*.${parts.slice(i).join(".")}`);
-        }
-
         const potentialResources = await db
             .select()
             .from(resources)
-            .where(
-                or(
-                    eq(resources.fullDomain, cleanHost),
-                    wildcardCandidates.length > 0
-                        ? and(
-                              eq(resources.wildcard, true),
-                              inArray(resources.fullDomain, wildcardCandidates)
-                          )
-                        : sql`false`
-                )
-            );
+            .where(resourceHostCondition(cleanHost));
 
-        const exactMatch = potentialResources.find(
-            (r) => r.fullDomain === cleanHost
+        const resource = pickResourceForHost(
+            potentialResources,
+            cleanHost,
+            (r) => r.fullDomain
         );
-        const resource = exactMatch ?? potentialResources[0];
 
         if (!resource) {
             return next(
@@ -128,9 +120,34 @@ export async function exchangeSession(
             );
         }
 
-        await db.delete(sessions).where(eq(sessions.sessionId, requestToken));
+        // Enforce single use: consume the request token. Checking the deleted
+        // row count makes concurrent exchanges of the same token race safely.
+        const consumed = await db
+            .delete(resourceSessions)
+            .where(eq(resourceSessions.sessionId, requestSession.sessionId))
+            .returning();
+
+        if (consumed.length === 0) {
+            return next(
+                createHttpError(HttpCode.UNAUTHORIZED, "Invalid request token")
+            );
+        }
 
         const token = generateSessionToken();
+
+        // The request token was created by the browser's login request, so it
+        // holds the real client details. Badger's IP is the fallback.
+        const clientInfo = requestSession.ip
+            ? {
+                  ip: requestSession.ip,
+                  userAgent: requestSession.userAgent,
+                  countryCode: requestSession.countryCode,
+                  asn: requestSession.asn
+              }
+            : {
+                  ip: clientIp,
+                  userAgent: requestSession.userAgent
+              };
 
         let expiresAt: number | null = null;
 
@@ -145,6 +162,8 @@ export async function exchangeSession(
                     token,
                     resourceId: resource.resourceId,
                     isRequestToken: false,
+                    requestSessionId: requestSession.sessionId,
+                    clientInfo,
                     userSessionId: requestSession.userSessionId,
                     doNotExtend: false,
                     expiresAt: res.expiresAt,
@@ -176,6 +195,8 @@ export async function exchangeSession(
                     token,
                     resourceId: resource.resourceId,
                     isRequestToken: false,
+                    requestSessionId: requestSession.sessionId,
+                    clientInfo,
                     accessTokenId: requestSession.accessTokenId,
                     doNotExtend: true,
                     expiresAt: res.expiresAt,
@@ -191,6 +212,8 @@ export async function exchangeSession(
                 token,
                 resourceId: resource.resourceId,
                 isRequestToken: false,
+                requestSessionId: requestSession.sessionId,
+                clientInfo,
                 passwordId: requestSession.passwordId,
                 pincodeId: requestSession.pincodeId,
                 userSessionId: requestSession.userSessionId,
